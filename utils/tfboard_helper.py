@@ -1,6 +1,7 @@
 import numpy as np
 import os
-
+import tensorflow.compat.v1 as tf
+tf.disable_v2_behavior()
 
 class TensorboardUtil(object):
     def __init__(self, writer, enable=True, **options):

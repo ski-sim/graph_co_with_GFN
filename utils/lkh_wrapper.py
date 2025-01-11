@@ -14,17 +14,17 @@ def solve(solver='LKH', problem=None, **params):
         if len(problem.depots) > 0:
             problem.depots = map(lambda x: f'{x}\n', problem.depots)
 
-        prob_file = tempfile.NamedTemporaryFile(mode='w')
+        prob_file = tempfile.NamedTemporaryFile(mode='w',delete=False)
         problem.write(prob_file)
         prob_file.write('\n')
         prob_file.flush()
         params['problem_file'] = prob_file.name
 
     if 'tour_file' not in params:
-        tour_file = tempfile.NamedTemporaryFile(mode='w')
+        tour_file = tempfile.NamedTemporaryFile(mode='w',delete=False)
         params['tour_file'] = tour_file.name
 
-    with tempfile.NamedTemporaryFile(mode='w') as par_file:
+    with tempfile.NamedTemporaryFile(mode='w',delete=False) as par_file:
         par_file.write('SPECIAL\n')
         for k, v in params.items():
             par_file.write(f'{k.upper()} = {v}\n')

@@ -65,7 +65,7 @@ class GCN(nn.Module):
             self.add_module('conv_{}'.format(l), conv)
             self.add_module('norm_{}'.format(l), norm)
 
-        self.init_parameters()
+        # self.init_parameters()
 
     def init_parameters(self):
         for l in range(self.num_layers):

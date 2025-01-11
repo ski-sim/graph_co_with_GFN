@@ -206,17 +206,17 @@ if __name__ == '__main__':
         args.add_graph_features,
         args.scheduler_type
     )
+    
     tuples_train, tuples_test = \
         load_tpch_tuples(args.train_sample, 0, *vargs), load_tpch_tuples(args.test_sample, 1, *vargs)
 
     # get current device (cuda or cpu)
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-
     # init models
     ac_params = dag_graph, args.node_feature_dim, args.node_output_size, args.batch_norm, args.one_hot_degree, \
                 args.gnn_layers
     policy_net = ActorCritic(*ac_params).to(device)
-    policy_net.load_state_dict(torch.load(args.test_model_weight, map_location=device))
+    policy_net.load_state_dict(torch.load(args.test_model_weight, map_location=device)) # 제외
     num_workers = cpu_count()
     mp_pool = Pool(num_workers)
 

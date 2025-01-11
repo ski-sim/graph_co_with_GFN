@@ -184,7 +184,7 @@ if __name__ == '__main__':
 
     # get current device (cuda or cpu)
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-
+    
     # load training/testing data
     tuples_train = ged_env.generate_tuples(ged_env.training_graphs, 50, 0, device)
     tuples_test = ged_env.generate_tuples(ged_env.val_graphs, 10, 1, device)

@@ -113,6 +113,10 @@ class GEDDataset(InMemoryDataset):
         else:
             retcode = os.system('svn checkout ' + self.url.format(self.datasets[self.name]['data_dir']) +
                                 ' {}/{}'.format(self.raw_dir, self.datasets[self.name]['data_dir']))
+            svn_command = 'svn checkout ' + self.url.format(self.datasets[self.name]['data_dir']) 
+            print("SVN Command: ", svn_command)
+            retcode = os.system(svn_command)
+
             assert retcode == 0
 
     def process(self):

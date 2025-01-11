@@ -8,7 +8,7 @@ from torch_geometric.utils import to_dense_batch, to_dense_adj, degree
 from torch_geometric.transforms import OneHotDegree
 import torch_geometric as pyg
 from utils.sinkhorn import Sinkhorn
-from a_star import a_star
+from utils.a_star import a_star
 import time
 
 VERY_LARGE_INT = 65536

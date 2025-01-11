@@ -397,7 +397,7 @@ class DAGraph(object):
             assert node in scores
             parents = graph.successors(node)
             for p in parents:
-                parent_time = graph.node[p]['features'][running_time_index]
+                parent_time = graph.nodes[p]['features'][running_time_index]# node -> nodes 수정
                 parent_score = parent_time + scores[node]
                 if (p not in scores) or (scores[p] < parent_score):
                     scores[p] = parent_score

@@ -255,13 +255,14 @@ def main(args):
         current_time = datetime.now().strftime('%b%d_%H-%M-%S')
         tfboard_path = os.path.join(tfboard_path, current_time + '_' + socket.gethostname())
         summary_writer = TensorboardUtil(tf.summary.FileWriter(tfboard_path))
+        
     except (ModuleNotFoundError, ImportError):
         print('Warning: Tensorboard not loading, please install tensorflow to enable...')
         summary_writer = None
 
     # get current device (cuda or cpu)
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-
+    
     # init models
     memory = Memory()
     ppo = PPO(dag_graph, args, device)
@@ -443,7 +444,7 @@ def parse_arguments():
 
     if args.config:
         with open('config/' + args.config) as f:
-            cfg_dict = yaml.load(f)
+            cfg_dict = yaml.load(f, Loader=yaml.FullLoader)
             for key, val in cfg_dict.items():
                 assert hasattr(args, key), f'Unknown config key: {key}'
                 setattr(args, key, val)

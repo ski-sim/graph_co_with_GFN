@@ -26,4 +26,5 @@ search_size: 12
 log_interval: 1
 test_interval: 100
 max_episodes: 200
-test_model_weight: pretrained/PPO_lkh-fast_min34_max103_beam12_opt0.2500.pt
+# test_model_weight: pretrained/PPO_lkh-fast_min34_max103_beam12_opt0.2500.pt
+test_model_weight: pretrained/test.pt

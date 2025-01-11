@@ -433,7 +433,7 @@ def parse_arguments():
 
     if args.config:
         with open('config/' + args.config) as f:
-            cfg_dict = yaml.load(f)
+            cfg_dict = yaml.load(f, Loader=yaml.FullLoader)
             for key, val in cfg_dict.items():
                 assert hasattr(args, key), f'Unknown config key: {key}'
                 setattr(args, key, val)
