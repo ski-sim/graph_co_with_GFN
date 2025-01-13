@@ -301,7 +301,13 @@ def main(args):
                 closs = ppo.update(memory)
                 critic_loss.append(closs)
                 if summary_writer:
-                    summary_writer.add_scalar(f'critic mse/train', closs, timestep)
+                    # summary_writer.add_scalar(f'critic mse/train', closs, timestep)
+                    with summary_writer.as_default():  # TensorFlow에서 summary 작성은 이 블록 안에서 수행
+                        if closs.is_cuda:
+                            closs_value = closs.cpu().item()
+                        else:
+                            closs_value = closs.item()
+                        tf.summary.scalar('critic mse/train', closs_value, step=timestep)
                 memory.clear_memory()
 
             running_reward += sum(items_batch.reward) / args.batch_size
@@ -323,10 +329,13 @@ def main(args):
             prev_time = now_time
 
             if summary_writer:
-                summary_writer.add_scalar(f'reward/train', running_reward, timestep)
-                summary_writer.add_scalar(f'time/train', avg_time, timestep)
+                # summary_writer.add_scalar(f'reward/train', running_reward, timestep)
+                tf.summary.scalar('reward/train', running_reward, step=timestep)
+                # summary_writer.add_scalar(f'time/train', avg_time, timestep)
+                tf.summary.scalar('reward/train', avg_time, step=timestep)
                 for lr_id, x in enumerate(ppo.optimizer.param_groups):
-                    summary_writer.add_scalar(f'lr/{lr_id}', x['lr'], timestep)
+                    # summary_writer.add_scalar(f'lr/{lr_id}', x['lr'], timestep)
+                    tf.summary.scalar('lr/{lr_id}', x['lr'], step=timestep)
 
             print(
                 f'Episode {i_episode} \t '
@@ -357,14 +366,14 @@ def main(args):
                 print("########## Evaluate on Test ##########")
                 # run testing
                 test_dict = evaluate(ppo.policy, tsp_env, tuples_test, args.max_timesteps, args.search_size, mp_pool)
-                # write to summary writter
-                for key, val in test_dict.items():
-                    if isinstance(val, dict):
-                        if summary_writer:
-                            summary_writer.add_scalars(f'{key}/test', val, timestep)
-                    else:
-                        if summary_writer:
-                            summary_writer.add_scalar(f'{key}/test', val, timestep)
+                # # write to summary writter
+                # for key, val in test_dict.items():
+                #     if isinstance(val, dict):
+                #         if summary_writer:
+                #             summary_writer.add_scalars(f'{key}/test', val, timestep)
+                #     else:
+                #         if summary_writer:
+                #             summary_writer.add_scalar(f'{key}/test', val, timestep)
                 print("########## Evaluate complete ##########")
                 # fix running time value
                 prev_time += time.time() - prev_test_time

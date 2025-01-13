@@ -48,8 +48,7 @@ def calc_lkh_tour_len(tsp, **lkh_kwargs):
 
 
 def calc_lkh_tour(tsp, **lkh_kwargs):
-    # solver_path = './LKH-3.0.13'
-    solver_path = 'C:/Users/user/Desktop/pythonFolder/PPO-BiHyb/LKH-3.0.13/LKH.exe'
+    solver_path = './LKH-3.0.13/LKH'
 
     if 'runs' not in lkh_kwargs:
         lkh_kwargs['runs'] = 4

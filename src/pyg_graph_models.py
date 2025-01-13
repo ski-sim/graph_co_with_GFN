@@ -119,13 +119,13 @@ class GraphAttentionPooling(nn.Module):
         :return representation: A graph level representation matrix.
         """
         size = batch[-1].item() + 1 if size is None else size
-        mean = scatter(x, batch, dim=0, dim_size=size, reduce='mean')
+        mean = scatter(x, batch, dim=0, dim_size=size, reduce='mean') # 해당 그래프마다 집계
         transformed_global = torch.tanh(torch.mm(mean, self.weight_matrix))
 
-        coefs = torch.sigmoid((x * transformed_global[batch] * 10).sum(dim=1))
+        coefs = torch.sigmoid((x * transformed_global[batch] * 10).sum(dim=1)) # 가중치
         weighted = coefs.unsqueeze(-1) * x
 
-        return scatter(weighted, batch, dim=0, dim_size=size, reduce='add')
+        return scatter(weighted, batch, dim=0, dim_size=size, reduce='add') # 가중합
 
     def get_coefs(self, x):
         mean = x.mean(dim=0)
@@ -193,9 +193,9 @@ class TensorNetworkModule(torch.nn.Module):
         """
         Defining weights.
         """
-        self.weight_matrix = torch.nn.Parameter(torch.Tensor(self.input_features, self.input_features, self.tensor_neurons))
-        self.weight_matrix_block = torch.nn.Parameter(torch.Tensor(self.tensor_neurons, 2*self.input_features))
-        self.bias = torch.nn.Parameter(torch.Tensor(self.tensor_neurons, 1))
+        self.weight_matrix = torch.nn.Parameter(torch.Tensor(self.input_features, self.input_features, self.tensor_neurons)) # W_R
+        self.weight_matrix_block = torch.nn.Parameter(torch.Tensor(self.tensor_neurons, 2*self.input_features)) #V_R
+        self.bias = torch.nn.Parameter(torch.Tensor(self.tensor_neurons, 1)) #b_R
 
     def init_parameters(self):
         """

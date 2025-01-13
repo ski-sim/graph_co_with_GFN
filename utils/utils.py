@@ -7,7 +7,7 @@ from scipy.spatial import Delaunay
 from scipy.spatial.qhull import QhullError
 import itertools
 
-
+# 각 batch별 그래프의 인덱스 생성
 def construct_graph_batch(graphs, one_hot_degree, device):
     # build pyg data
     if isinstance(graphs, nx.DiGraph):

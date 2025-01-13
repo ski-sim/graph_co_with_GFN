@@ -254,14 +254,14 @@ def main(args):
         from datetime import datetime
         current_time = datetime.now().strftime('%b%d_%H-%M-%S')
         tfboard_path = os.path.join(tfboard_path, current_time + '_' + socket.gethostname())
-        summary_writer = TensorboardUtil(tf.summary.FileWriter(tfboard_path))
-        
+        # summary_writer = TensorboardUtil(tf.summary.FileWriter(tfboard_path))
+        summary_writer = tf.summary.create_file_writer(tfboard_path)        
     except (ModuleNotFoundError, ImportError):
         print('Warning: Tensorboard not loading, please install tensorflow to enable...')
         summary_writer = None
 
     # get current device (cuda or cpu)
-    device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+    device = torch.device("cuda:6" if torch.cuda.is_available() else "cpu")
     
     # init models
     memory = Memory()
@@ -322,7 +322,13 @@ def main(args):
                 closs = ppo.update(memory)
                 critic_loss.append(closs)
                 if summary_writer:
-                    summary_writer.add_scalar('critic mse/train', closs, timestep)
+                    # summary_writer.add_scalar('critic mse/train', closs, timestep)
+                    with summary_writer.as_default():  # TensorFlow에서 summary 작성은 이 블록 안에서 수행
+                        if closs.is_cuda:
+                            closs_value = closs.cpu().item()
+                        else:
+                            closs_value = closs.item()
+                        tf.summary.scalar('critic mse/train', closs_value, step=timestep)
                 memory.clear_memory()
 
             running_reward += sum(items_batch.reward) / args.batch_size
@@ -344,10 +350,14 @@ def main(args):
             prev_time = now_time
 
             if summary_writer:
-                summary_writer.add_scalar('reward/train', running_reward, timestep)
-                summary_writer.add_scalar('time/train', avg_time, timestep)
+                # summary_writer.add_scalar('reward/train', running_reward, timestep)
+                tf.summary.scalar('reward/train', running_reward, step=timestep)
+                # summary_writer.add_scalar('time/train', avg_time, timestep)
+                tf.summary.scalar('reward/train', avg_time, step=timestep)
+                
                 for lr_id, x in enumerate(ppo.optimizer.param_groups):
-                    summary_writer.add_scalar(f'lr/{lr_id}', x['lr'], timestep)
+                    # summary_writer.add_scalar(f'lr/{lr_id}', x['lr'], timestep)
+                    tf.summary.scalar('lr/{lr_id}', x['lr'], step=timestep)
 
             print(
                 f'Episode {i_episode} \t '
@@ -379,13 +389,15 @@ def main(args):
                 # run testing
                 test_dict = evaluate(ppo.policy, dag_graph, tuples_test, args.max_timesteps, args.search_size, mp_pool)
                 # write to summary writter
-                for key, val in test_dict.items():
-                    if isinstance(val, dict):
-                        if summary_writer:
-                            summary_writer.add_scalars(f'{key}/test', val, timestep)
-                    else:
-                        if summary_writer:
-                            summary_writer.add_scalar(f'{key}/test', val, timestep)
+                # for key, val in test_dict.items():
+                #     if isinstance(val, dict):
+                #         if summary_writer:
+                #             # summary_writer.add_scalars(f'{key}/test', val, timestep)
+                #             tf.summary.scalar('{key}/test', float(val), step=timestep)
+                #     else:
+                #         if summary_writer:
+                #             # summary_writer.add_scalar(f'{key}/test', val, timestep)
+                #             tf.summary.scalar('{key}/test',float(val), step=timestep)
                 print("########## Evaluate complete ##########")
                 # fix running time value
                 prev_time += time.time() - prev_test_time
@@ -459,4 +471,7 @@ def parse_arguments():
 
 
 if __name__ == '__main__':
+    start_time = time.time()
     main(parse_arguments())
+    end_time = time.time()
+    print(f'total elapsed time:{end_time-start_time}')

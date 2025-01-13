@@ -312,15 +312,15 @@ def load_tpch_tuples(num_graphs, tid, dag_graph,
         cps = dag_graph.critical_path_scheduling(merged_dag)
         ts = dag_graph.tetris_scheduling(merged_dag)
         print('graphs', sizes,
-              'nodes', len(merged_dag.nodes()),
-              'dags', graphs,
-              'sft', round(sft, 6),
-              'shortest_first', round(sfs, 6),
-              'critical_path', round(cps, 6),
-              'tetris', round(ts, 6),
-              'resource', resource_dist,
-              #'resource', [sorted(l) for l in resource_list]
-              )
+               'nodes', len(merged_dag.nodes()))
+        #       'dags', graphs,
+        #       'sft', round(sft, 6),
+        #       'shortest_first', round(sfs, 6),
+        #       'critical_path', round(cps, 6),
+        #       'tetris', round(ts, 6),
+        #       'resource', resource_dist,
+        #       #'resource', [sorted(l) for l in resource_list]
+        #       )
         tuples.append((merged_dag, sft, graphs,
                        {'shortest_first': sfs,
                         'critical_path': cps,
@@ -333,9 +333,9 @@ def load_tpch_tuples(num_graphs, tid, dag_graph,
     std_cps = np.std([t[3]['critical_path'] for t in tuples])
     avg_ts = np.mean([t[3]['tetris'] for t in tuples])
     std_ts = np.std([t[3]['tetris'] for t in tuples])
-    print(f'avg_nodes {avg_nodes:.4f} '
-          f'shortest_first mean={avg_sfs:.4f} std={std_sfs:.4f} '
-          f'critical_path mean={avg_cps:.4f} std={std_cps:.4f} '
-          f'tetris mean={avg_ts:.4f} std={std_ts:.4f} '
-          f'selected_graphs {selected_graphs}')
+    # print(f'avg_nodes {avg_nodes:.4f} '
+    #       f'shortest_first mean={avg_sfs:.4f} std={std_sfs:.4f} '
+    #       f'critical_path mean={avg_cps:.4f} std={std_cps:.4f} '
+    #       f'tetris mean={avg_ts:.4f} std={std_ts:.4f} '
+    #       f'selected_graphs {selected_graphs}')
     return tuples
