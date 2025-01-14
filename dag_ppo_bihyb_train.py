@@ -16,7 +16,7 @@ from utils.utils import print_args
 from utils.tfboard_helper import TensorboardUtil
 from utils.dag_graph import DAGraph
 from dag_data.dag_generator import load_tpch_tuples
-from dag_ppo_bihyb_eval import evaluate
+from dag_ppo_bihyb_eval import evaluate, evaluate_gfn
 
 
 class ItemsContainer:
@@ -79,6 +79,7 @@ class Memory:
     def __init__(self):
         self.actions = []
         self.states = []
+        self.next_states = []
         self.candidates = []
         self.logprobs = []
         self.rewards = []
@@ -87,6 +88,7 @@ class Memory:
     def clear_memory(self):
         del self.actions[:]
         del self.states[:]
+        del self.next_states[:]
         del self.candidates[:]
         del self.logprobs[:]
         del self.rewards[:]
@@ -217,6 +219,97 @@ class PPO:
         return critic_loss_sum / self.K_epochs  # mean critic loss
 
 
+class GFN(nn.Module):
+    def __init__(self, dag_graph, args, device):
+        super(GFN, self).__init__()
+        self.lr = args.learning_rate
+        self.betas = args.betas
+        # self.gamma = args.gamma
+        # self.eps_clip = args.eps_clip
+        # self.K_epochs = args.k_epochs
+        
+        self.device = device
+        
+        # ac_params = dag_graph, args.node_feature_dim, args.node_output_size, args.batch_norm, \
+        #             args.one_hot_degree, args.gnn_layers
+                    
+        self.state_encoder = GraphEncoder(args.node_feature_dim, args.node_output_size, args.batch_norm, args.one_hot_degree, args.gnn_layers)
+        self.forward_policy = ActorNet(dag_graph, args.node_output_size * 4, args.batch_norm)
+        self.flow_model = CriticNet(dag_graph, args.node_output_size * 4, args.batch_norm)
+
+        self.state_encoder.to(self.device)
+        self.forward_policy.to(self.device)
+        self.flow_model.to(self.device)
+
+        self.optimizer = torch.optim.Adam(
+            [{'params': self.forward_policy.parameters()},
+             {'params': self.flow_model.parameters(), 'lr': self.lr * 10}, # we usually assign high learning rate for flow model
+             {'params': self.state_encoder.parameters(), 'lr': self.lr / 10}],
+            lr=self.lr, betas=self.betas)
+        if len(args.lr_steps) > 0:
+            # rescale lr_step value to match the action steps
+            lr_steps = [step // args.update_timestep for step in args.lr_steps]
+            self.lr_scheduler = torch.optim.lr_scheduler.MultiStepLR(self.optimizer, lr_steps, gamma=0.1)
+        else:
+            self.lr_scheduler = None
+            
+        self.MseLoss = nn.MSELoss()
+        
+    def act(self, inp_graph, edge_candidates, memory):
+        state_feat = self.state_encoder(inp_graph)
+        actions, action_logits, entropy = self.forward_policy(state_feat, edge_candidates)
+        
+        memory.states.append(inp_graph)
+        memory.candidates.append(edge_candidates)
+        memory.actions.append(actions)
+        memory.logprobs.append(action_logits)
+        
+        return actions
+    
+    def evaluate(self, inp_graph, edge_candidates, action):
+        state_feat = self.state_encoder(inp_graph)
+        _, action_logits, _ = self.forward_policy(state_feat, edge_candidates, action)
+        # state_value = self.flow_model(state_feat)
+        
+        return action_logits
+        
+    def update(self, memory):
+        states = []
+        for state in memory.states:
+            states += state
+        actions = torch.cat(memory.actions, dim=1)
+        rewards = torch.tensor(memory.rewards, dtype=torch.float32).to(self.device).flatten()
+        next_states = []
+        for state in memory.next_states:
+            next_states += state
+        candidates = []
+        for candi in memory.candidates:
+            candidates += candi
+        
+        # log p(a1, a2) = log p(a1) + log p(a2|a1)
+        log_pf = self.evaluate(states, candidates, actions).sum(dim=0)
+        # only adding an edge is possible. Therefore, log_pb is always 0
+        log_pb = torch.zeros_like(log_pf).to(self.device)
+        state_feats = self.state_encoder(states)
+        log_fs = self.flow_model(state_feats)
+
+        total_loss = torch.zeros((len(states)-1)).to(self.device)
+        total_loss += log_fs[:-1]
+        total_loss += log_pf[:-1]
+        total_loss -= log_pb[1:]
+        total_loss += log_fs[1:]
+        # FL-DB parametrization. We consider reward as intermediate energy function over transitions
+        total_loss -= rewards[:-1]
+        total_loss = total_loss.pow(2).mean()
+        
+        self.optimizer.zero_grad()
+        total_loss.backward()
+        self.optimizer.step()
+        if self.lr_scheduler:
+            self.lr_scheduler.step()
+            
+        return total_loss
+
 def main(args):
     # initialize manual seed
     if args.random_seed is not None:
@@ -261,153 +354,304 @@ def main(args):
         summary_writer = None
 
     # get current device (cuda or cpu)
-    device = torch.device("cuda:6" if torch.cuda.is_available() else "cpu")
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     
     # init models
     memory = Memory()
-    ppo = PPO(dag_graph, args, device)
-    num_workers = cpu_count()
-    mp_pool = Pool(num_workers)
+    if args.model == 'ppo':
+        ppo = PPO(dag_graph, args, device)
+        num_workers = cpu_count()
+        mp_pool = Pool(num_workers)
 
-    # logging variables
-    best_test_ratio = 0
-    running_reward = 0
-    critic_loss = []
-    avg_length = 0
-    timestep = 0
-    prev_time = time.time()
+        # logging variables
+        best_test_ratio = 0
+        running_reward = 0
+        critic_loss = []
+        avg_length = 0
+        timestep = 0
+        prev_time = time.time()
 
-    # training loop
-    for i_episode in range(1, args.max_episodes + 1):
-        items_batch = ItemsContainer()
-        for b in range(args.batch_size):
-            graph_index = ((i_episode - 1) * args.batch_size + b) % len(tuples_train)
-            inp_graph, ori_greedy, _, baselines = tuples_train[graph_index]  # we treat inp_graph as the state
-            greedy = ori_greedy
-            edge_candidates = dag_graph.get_edge_candidates(inp_graph)
-            items_batch.append(0, inp_graph, greedy, edge_candidates, False, ori_greedy)
+        # training loop
+        for i_episode in range(1, args.max_episodes + 1):
+            items_batch = ItemsContainer()
+            for b in range(args.batch_size):
+                graph_index = ((i_episode - 1) * args.batch_size + b) % len(tuples_train)
+                inp_graph, ori_greedy, _, baselines = tuples_train[graph_index]  # we treat inp_graph as the state
+                greedy = ori_greedy
+                edge_candidates = dag_graph.get_edge_candidates(inp_graph)
+                items_batch.append(0, inp_graph, greedy, edge_candidates, False, ori_greedy)
 
-        for t in range(args.max_timesteps):
-            timestep += 1
+            for t in range(args.max_timesteps):
+                timestep += 1
 
-            # Running policy_old:
-            with torch.no_grad():
-                action_batch = ppo.policy_old.act(items_batch.inp_graph, items_batch.edge_candidates, memory)
+                # Running policy_old:
+                with torch.no_grad():
+                    action_batch = ppo.policy_old.act(items_batch.inp_graph, items_batch.edge_candidates, memory)
 
-            def step_func_feeder(batch_size):
-                batch_inp_graph = items_batch.inp_graph
-                action_batch_cpu = action_batch.cpu()
-                batch_greedy = items_batch.greedy
-                for b in range(batch_size):
-                    yield batch_inp_graph[b], action_batch_cpu[:, b], batch_greedy[b]
+                def step_func_feeder(batch_size):
+                    batch_inp_graph = items_batch.inp_graph
+                    action_batch_cpu = action_batch.cpu()
+                    batch_greedy = items_batch.greedy
+                    for b in range(batch_size):
+                        yield batch_inp_graph[b], action_batch_cpu[:, b], batch_greedy[b]
 
-            if args.batch_size > 1:
-                pool_map = mp_pool.starmap_async(dag_graph.step, step_func_feeder(args.batch_size))
-                step_list = pool_map.get()
-            else:
-                step_list = [dag_graph.step(*x) for x in step_func_feeder(args.batch_size)]
-            for b, item in enumerate(step_list):
-                reward, inp_graph, greedy, edge_candidates, done = item
-                if t == args.max_timesteps - 1:
-                    done = True
-                items_batch.update(b, reward=reward, inp_graph=inp_graph, greedy=greedy,
-                                   edge_candidates=edge_candidates, done=done)
+                if args.batch_size > 1:
+                    pool_map = mp_pool.starmap_async(dag_graph.step, step_func_feeder(args.batch_size))
+                    step_list = pool_map.get()
+                else:
+                    step_list = [dag_graph.step(*x) for x in step_func_feeder(args.batch_size)]
+                for b, item in enumerate(step_list):
+                    reward, inp_graph, greedy, edge_candidates, done = item
+                    if t == args.max_timesteps - 1:
+                        done = True
+                    items_batch.update(b, reward=reward, inp_graph=inp_graph, greedy=greedy,
+                                    edge_candidates=edge_candidates, done=done)
 
-            # Saving reward and is_terminal:
-            memory.rewards.append(items_batch.reward)
-            memory.is_terminals.append(items_batch.done)
-
-            # update if its time
-            if timestep % args.update_timestep == 0:
-                closs = ppo.update(memory)
-                critic_loss.append(closs)
-                if summary_writer:
-                    # summary_writer.add_scalar('critic mse/train', closs, timestep)
-                    with summary_writer.as_default():  # TensorFlow에서 summary 작성은 이 블록 안에서 수행
-                        if closs.is_cuda:
-                            closs_value = closs.cpu().item()
-                        else:
-                            closs_value = closs.item()
-                        tf.summary.scalar('critic mse/train', closs_value, step=timestep)
-                memory.clear_memory()
-
-            running_reward += sum(items_batch.reward) / args.batch_size
-            if any(items_batch.done):
-                break
-
-        avg_length += t+1
-
-        # logging
-        if i_episode % args.log_interval == 0:
-            avg_length = avg_length / args.log_interval
-            running_reward = running_reward / args.log_interval
-            if len(critic_loss) > 0:
-                critic_loss = torch.mean(torch.stack(critic_loss))
-            else:
-                critic_loss = -1
-            now_time = time.time()
-            avg_time = (now_time - prev_time) / args.log_interval
-            prev_time = now_time
-
-            if summary_writer:
-                # summary_writer.add_scalar('reward/train', running_reward, timestep)
-                tf.summary.scalar('reward/train', running_reward, step=timestep)
-                # summary_writer.add_scalar('time/train', avg_time, timestep)
-                tf.summary.scalar('reward/train', avg_time, step=timestep)
+                # Saving reward and is_terminal:
+                memory.rewards.append(items_batch.reward)
+                memory.is_terminals.append(items_batch.done)
                 
-                for lr_id, x in enumerate(ppo.optimizer.param_groups):
-                    # summary_writer.add_scalar(f'lr/{lr_id}', x['lr'], timestep)
-                    tf.summary.scalar('lr/{lr_id}', x['lr'], step=timestep)
+                # update if its time
+                if timestep % args.update_timestep == 0:
+                    closs = ppo.update(memory)
+                    critic_loss.append(closs)
+                    if summary_writer:
+                        # summary_writer.add_scalar('critic mse/train', closs, timestep)
+                        with summary_writer.as_default():  # TensorFlow에서 summary 작성은 이 블록 안에서 수행
+                            if closs.is_cuda:
+                                closs_value = closs.cpu().item()
+                            else:
+                                closs_value = closs.item()
+                            tf.summary.scalar('critic mse/train', closs_value, step=timestep)
+                    memory.clear_memory()
 
-            print(
-                f'Episode {i_episode} \t '
-                f'avg length: {avg_length:.2f} \t '
-                f'critic mse: {critic_loss:.4f} \t '
-                f'reward: {running_reward:.4f} \t '
-                f'time per episode: {avg_time:.2f}'
-            )
+                running_reward += sum(items_batch.reward) / args.batch_size
+                if any(items_batch.done):
+                    break
 
-            running_reward = 0
-            avg_length = 0
-            critic_loss = []
+            avg_length += t+1
 
-        # testing
-        if i_episode % args.test_interval == 0:
-            with torch.no_grad():
-                # record time spent on test
-                prev_test_time = time.time()
-                #print("########## Evaluate on Train ##########")
-                #train_dict = evaluate(ppo.policy, dag_graph, tuples_train, args.max_timesteps, args.search_size, mp_pool)
-                #for key, val in train_dict.items():
-                #    if isinstance(val, dict):
-                #        if summary_writer:
-                #            summary_writer.add_scalars(f'{key}/train-eval', val, timestep)
-                #    else:
-                #        if summary_writer:
-                #            summary_writer.add_scalar(f'{key}/train-eval', val, timestep)
-                print("########## Evaluate on Test ##########")
-                # run testing
-                test_dict = evaluate(ppo.policy, dag_graph, tuples_test, args.max_timesteps, args.search_size, mp_pool)
-                # write to summary writter
-                # for key, val in test_dict.items():
-                #     if isinstance(val, dict):
-                #         if summary_writer:
-                #             # summary_writer.add_scalars(f'{key}/test', val, timestep)
-                #             tf.summary.scalar('{key}/test', float(val), step=timestep)
-                #     else:
-                #         if summary_writer:
-                #             # summary_writer.add_scalar(f'{key}/test', val, timestep)
-                #             tf.summary.scalar('{key}/test',float(val), step=timestep)
-                print("########## Evaluate complete ##########")
-                # fix running time value
-                prev_time += time.time() - prev_test_time
+            # logging
+            if i_episode % args.log_interval == 0:
+                avg_length = avg_length / args.log_interval
+                running_reward = running_reward / args.log_interval
+                if len(critic_loss) > 0:
+                    critic_loss = torch.mean(torch.stack(critic_loss))
+                else:
+                    critic_loss = -1
+                now_time = time.time()
+                avg_time = (now_time - prev_time) / args.log_interval
+                prev_time = now_time
 
-            if test_dict["ratio"]["mean"] > best_test_ratio:
-                best_test_ratio = test_dict["ratio"]["mean"]
-                file_name = f'./PPO_{args.scheduler_type}_dag_num{args.num_init_dags}' \
-                            f'_beam{args.search_size}_ratio{best_test_ratio:.4f}.pt'
-                torch.save(ppo.policy.state_dict(), file_name)
+                if summary_writer:
+                    # summary_writer.add_scalar('reward/train', running_reward, timestep)
+                    tf.summary.scalar('reward/train', running_reward, step=timestep)
+                    # summary_writer.add_scalar('time/train', avg_time, timestep)
+                    tf.summary.scalar('reward/train', avg_time, step=timestep)
+                    
+                    for lr_id, x in enumerate(ppo.optimizer.param_groups):
+                        # summary_writer.add_scalar(f'lr/{lr_id}', x['lr'], timestep)
+                        tf.summary.scalar('lr/{lr_id}', x['lr'], step=timestep)
 
+                print(
+                    f'Episode {i_episode} \t '
+                    f'avg length: {avg_length:.2f} \t '
+                    f'critic mse: {critic_loss:.4f} \t '
+                    f'reward: {running_reward:.4f} \t '
+                    f'time per episode: {avg_time:.2f}'
+                )
+
+                running_reward = 0
+                avg_length = 0
+                critic_loss = []
+
+            # testing
+            if i_episode % args.test_interval == 0:
+                with torch.no_grad():
+                    # record time spent on test
+                    prev_test_time = time.time()
+                    #print("########## Evaluate on Train ##########")
+                    #train_dict = evaluate(ppo.policy, dag_graph, tuples_train, args.max_timesteps, args.search_size, mp_pool)
+                    #for key, val in train_dict.items():
+                    #    if isinstance(val, dict):
+                    #        if summary_writer:
+                    #            summary_writer.add_scalars(f'{key}/train-eval', val, timestep)
+                    #    else:
+                    #        if summary_writer:
+                    #            summary_writer.add_scalar(f'{key}/train-eval', val, timestep)
+                    print("########## Evaluate on Test ##########")
+                    # run testing
+                    test_dict = evaluate(ppo.policy, dag_graph, tuples_test, args.max_timesteps, args.search_size, mp_pool)
+                    # write to summary writter
+                    # for key, val in test_dict.items():
+                    #     if isinstance(val, dict):
+                    #         if summary_writer:
+                    #             # summary_writer.add_scalars(f'{key}/test', val, timestep)
+                    #             tf.summary.scalar('{key}/test', float(val), step=timestep)
+                    #     else:
+                    #         if summary_writer:
+                    #             # summary_writer.add_scalar(f'{key}/test', val, timestep)
+                    #             tf.summary.scalar('{key}/test',float(val), step=timestep)
+                    print("########## Evaluate complete ##########")
+                    # fix running time value
+                    prev_time += time.time() - prev_test_time
+
+                if test_dict["ratio"]["mean"] > best_test_ratio:
+                    best_test_ratio = test_dict["ratio"]["mean"]
+                    if not os.path.exists('./results'):
+                        os.makedirs('./results', exist_ok=True)
+                    file_name = f'./results/PPO_{args.scheduler_type}_dag_num{args.num_init_dags}' \
+                                f'_beam{args.search_size}_ratio{best_test_ratio:.4f}.pt'
+                    torch.save(ppo.policy.state_dict(), file_name)
+    elif args.model == "gfn":
+        # FL-DB Implementation
+        gfn = GFN(dag_graph, args, device)
+        num_workers = cpu_count()
+        mp_pool = Pool(num_workers)
+        
+        # logging variables
+        best_test_ratio = 0
+        running_reward = 0
+        gfn_loss = []
+        avg_length = 0
+        timestep = 0
+        prev_time = time.time()
+        
+        # training loop
+        for i_episode in range(1, args.max_episodes + 1):
+            items_batch = ItemsContainer()
+            for b in range(args.batch_size):
+                graph_index = ((i_episode - 1) * args.batch_size + b) % len(tuples_train)
+                inp_graph, ori_greedy, _, baselines = tuples_train[graph_index]  # we treat inp_graph as the state
+                greedy = ori_greedy
+                edge_candidates = dag_graph.get_edge_candidates(inp_graph)
+                items_batch.append(0, inp_graph, greedy, edge_candidates, False, ori_greedy)
+
+            for t in range(args.max_timesteps):
+                timestep += 1
+                
+                with torch.no_grad():
+                    action_batch = gfn.act(items_batch.inp_graph, items_batch.edge_candidates, memory)
+                    
+                def step_func_feeder(batch_size):
+                    batch_inp_graph = items_batch.inp_graph
+                    action_batch_cpu = action_batch.cpu()
+                    batch_greedy = items_batch.greedy
+                    for b in range(batch_size):
+                        yield batch_inp_graph[b], action_batch_cpu[:, b], batch_greedy[b]
+                        
+                if args.batch_size > 1:
+                    pool_map = mp_pool.starmap_async(dag_graph.step, step_func_feeder(args.batch_size))
+                    step_list = pool_map.get()
+                else:
+                    step_list = [dag_graph.step(*x) for x in step_func_feeder(args.batch_size)]
+                for b, item in enumerate(step_list):
+                    reward, inp_graph, greedy, edge_candidates, done = item
+                    if t == args.max_timesteps - 1:
+                        done = True
+                    items_batch.update(b, reward=reward, inp_graph=inp_graph, greedy=greedy,
+                                    edge_candidates=edge_candidates, done=done)
+                    
+                # Saving reward and is_terminal:
+                memory.rewards.append(items_batch.reward)
+                memory.is_terminals.append(items_batch.done)
+                memory.next_states.append(items_batch.inp_graph)
+                           
+                # update if its time
+                if timestep % args.update_timestep == 0:
+                    loss = gfn.update(memory)
+                    gfn_loss.append(loss)
+                    if summary_writer:
+                        # summary_writer.add_scalar('gfn loss/train', loss, timestep)
+                        with summary_writer.as_default():
+                            if loss.is_cuda:
+                                loss_value = loss.cpu().item()
+                            else:
+                                loss_value = loss.item()
+                            tf.summary.scalar('gfn loss/train', loss_value, step=timestep)
+                    memory.clear_memory()
+
+                running_reward += sum(items_batch.reward) / args.batch_size
+                if any(items_batch.done):
+                    break
+            
+            avg_length += t+1
+            
+            # logging
+            if i_episode % args.log_interval == 0:
+                avg_length = avg_length / args.log_interval
+                running_reward = running_reward / args.log_interval
+                if len(gfn_loss) > 0:
+                    gfn_loss = torch.mean(torch.stack(gfn_loss))
+                else:
+                    gfn_loss = -1
+                now_time = time.time()
+                avg_time = (now_time - prev_time) / args.log_interval
+                prev_time = now_time
+
+                if summary_writer:
+                    # summary_writer.add_scalar('reward/train', running_reward, timestep)
+                    tf.summary.scalar('reward/train', running_reward, step=timestep)
+                    # summary_writer.add_scalar('time/train', avg_time, timestep)
+                    tf.summary.scalar('reward/train', avg_time, step=timestep)
+                    
+                    for lr_id, x in enumerate(gfn.optimizer.param_groups):
+                        # summary_writer.add_scalar(f'lr/{lr_id}', x['lr'], timestep)
+                        tf.summary.scalar('lr/{lr_id}', x['lr'], step=timestep)
+
+                print(
+                    f'Episode {i_episode} \t '
+                    f'avg length: {avg_length:.2f} \t '
+                    f'gfn_loss: {gfn_loss:.4f} \t '
+                    f'reward: {running_reward:.4f} \t '
+                    f'time per episode: {avg_time:.2f}'
+                )
+
+                running_reward = 0
+                avg_length = 0
+                gfn_loss = []
+                
+            # testing
+            if i_episode % args.test_interval == 0:
+                with torch.no_grad():
+                    # record time spent on test
+                    prev_test_time = time.time()
+                    #print("########## Evaluate on Train ##########")
+                    #train_dict = evaluate(ppo.policy, dag_graph, tuples_train, args.max_timesteps, args.search_size, mp_pool)
+                    #for key, val in train_dict.items():
+                    #    if isinstance(val, dict):
+                    #        if summary_writer:
+                    #            summary_writer.add_scalars(f'{key}/train-eval', val, timestep)
+                    #    else:
+                    #        if summary_writer:
+                    #            summary_writer.add_scalar(f'{key}/train-eval', val, timestep)
+                    print("########## Evaluate on Test ##########")
+                    # run testing
+                    test_dict = evaluate_gfn(gfn, dag_graph, tuples_test, args.max_timesteps, args.search_size, mp_pool)
+                    # write to summary writter
+                    # for key, val in test_dict.items():
+                    #     if isinstance(val, dict):
+                    #         if summary_writer:
+                    #             # summary_writer.add_scalars(f'{key}/test', val, timestep)
+                    #             tf.summary.scalar('{key}/test', float(val), step=timestep)
+                    #     else:
+                    #         if summary_writer:
+                    #             # summary_writer.add_scalar(f'{key}/test', val, timestep)
+                    #             tf.summary.scalar('{key}/test',float(val), step=timestep)
+                    print("########## Evaluate complete ##########")
+                    # fix running time value
+                    prev_time += time.time() - prev_test_time
+
+                if test_dict["ratio"]["mean"] > best_test_ratio:
+                    best_test_ratio = test_dict["ratio"]["mean"]
+                    # file_name = f'./GFN_{args.scheduler_type}_dag_num{args.num_init_dags}' \
+                    #             f'_beam{args.search_size}_ratio{best_test_ratio:.4f}.pt'
+                    if not os.path.exists('./results'):
+                        os.makedirs('./results', exist_ok=True)
+                    file_name = f'./results/GFN_{args.scheduler_type}_dag_num{args.num_init_dags}' \
+                                f'_beam{args.search_size}_ratio{best_test_ratio:.4f}.pt'
+                    torch.save(gfn.state_dict(), file_name)
+                    
 
 def parse_arguments():
     parser = argparse.ArgumentParser(description='DAG scheduler. You have two ways of setting the parameters: \n'
@@ -451,6 +695,10 @@ def parse_arguments():
     parser.add_argument('--test_interval', default=500, type=int, help='run testing in the interval (episodes)')
     parser.add_argument('--log_interval', default=100, type=int, help='print avg reward in the interval (episodes)')
     parser.add_argument('--test_model_weight', default='', type=str, help='the path of model weight to be loaded')
+    
+    
+    # GFlowNet
+    parser.add_argument('--model', default='ppo', type=str, help='model name')
 
     args = parser.parse_args()
 
