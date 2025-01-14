@@ -10,3 +10,4 @@ pyyaml
 texttable
 tensorflow
 tsplib95
+cython

@@ -114,8 +114,8 @@ class TSPEnv(object):
                 sum_num_nodes = 0
                 for solver_name in self.available_solvers:
                     print(f'{solver_name} tour_len '
-                          f'mean={np.mean([tup[3][solver_name] for tup in return_tuples], dtype=np.float):.4f} '
-                          f'std={np.std([tup[3][solver_name] for tup in return_tuples], dtype=np.float):.4f}')
+                          f'mean={np.mean([tup[3][solver_name] for tup in return_tuples], dtype=float):.4f} '
+                          f'std={np.std([tup[3][solver_name] for tup in return_tuples], dtype=float):.4f}')
                 return_tuples = testing_tuples
                 if len(testing_tuples) > 0:
                     break

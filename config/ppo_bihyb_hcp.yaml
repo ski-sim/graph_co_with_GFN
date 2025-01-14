@@ -1,7 +1,7 @@
 # environment configs
 solver_type: lkh-fast
 min_size: 34
-max_size: 104
+max_size: 103 #104
 gamma: 0.95
 train_sample: 50
 test_sample: 20

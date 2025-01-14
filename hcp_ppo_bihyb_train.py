@@ -226,7 +226,7 @@ def main(args):
     args.node_feature_dim = 1
 
     # get current device (cuda or cpu)
-    device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+    device = torch.device("cuda:6" if torch.cuda.is_available() else "cpu")
 
     # load training/testing data
     tuples_train, tuples_test = tsp_env.generate_tuples(args.train_sample, args.test_sample, 0)
@@ -240,7 +240,8 @@ def main(args):
         from datetime import datetime
         current_time = datetime.now().strftime('%b%d_%H-%M-%S')
         tfboard_path = os.path.join(tfboard_path, current_time + '_' + socket.gethostname())
-        summary_writer = TensorboardUtil(tf.summary.FileWriter(tfboard_path))
+        # summary_writer = TensorboardUtil(tf.summary.FileWriter(tfboard_path))
+        summary_writer = tf.summary.create_file_writer(tfboard_path)  
     except (ModuleNotFoundError, ImportError):
         print('Warning: Tensorboard not loading, please install tensorflow to enable...')
         summary_writer = None
@@ -446,4 +447,6 @@ def parse_arguments():
 
 
 if __name__ == '__main__':
+    start_time = time.time()
     main(parse_arguments())
+    print(f'total time:{time.time()-start_time}')
