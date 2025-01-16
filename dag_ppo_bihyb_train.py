@@ -74,7 +74,6 @@ class ItemsContainer:
         if ori_greedy is not None:
             self.__ori_greedy[idx] = ori_greedy
 
-
 class Memory:
     def __init__(self):
         self.actions = []
@@ -94,6 +93,115 @@ class Memory:
         del self.rewards[:]
         del self.is_terminals[:]
 
+from collections import deque
+
+class Memory_deque:
+    def __init__(self, maxlen=300):  # maxlen 기본값 설정
+        self.actions = deque(maxlen=maxlen)
+        self.states = deque(maxlen=maxlen)
+        self.next_states = deque(maxlen=maxlen)
+        self.candidates = deque(maxlen=maxlen)
+        self.logprobs = deque(maxlen=maxlen)
+        self.rewards = deque(maxlen=maxlen)
+        self.is_terminals = deque(maxlen=maxlen)
+
+    def clear_memory(self):
+        self.actions.clear()
+        self.states.clear()
+        self.next_states.clear()
+        self.candidates.clear()
+        self.logprobs.clear()
+        self.rewards.clear()
+        self.is_terminals.clear()
+    
+    def merge(self, other_memory):
+            """
+            Merges another Memory_deque into this one.
+            If the combined size exceeds maxlen, the oldest entries will be removed.
+            """
+            self.actions.extend(other_memory.actions)
+            self.states.extend(other_memory.states)
+            self.next_states.extend(other_memory.next_states)
+            self.candidates.extend(other_memory.candidates)
+            self.logprobs.extend(other_memory.logprobs)
+            self.rewards.extend(other_memory.rewards)
+            self.is_terminals.extend(other_memory.is_terminals)
+
+    def trim_recent(self, sample_size):
+        """
+        Sample the most recent `sample_size` items and trim the memory.
+        Returns a new Memory_deque containing the sampled items.
+        """
+        # 기존 memory에서 잘라내기
+        self.actions = deque(list(self.actions)[:-sample_size], maxlen=self.actions.maxlen)
+        self.states = deque(list(self.states)[:-sample_size], maxlen=self.states.maxlen)
+        self.next_states = deque(list(self.next_states)[:-sample_size], maxlen=self.next_states.maxlen)
+        self.candidates = deque(list(self.candidates)[:-sample_size], maxlen=self.candidates.maxlen)
+        self.logprobs = deque(list(self.logprobs)[:-sample_size], maxlen=self.logprobs.maxlen)
+        self.rewards = deque(list(self.rewards)[:-sample_size], maxlen=self.rewards.maxlen)
+        self.is_terminals = deque(list(self.is_terminals)[:-sample_size], maxlen=self.is_terminals.maxlen)
+
+
+
+def softmax(x):
+    exp_x = np.exp(x - np.max(x))  # 안정성을 위해 최대값을 빼줌 (overflow 방지)
+    return exp_x / exp_x.sum()
+
+def sample_memory(memory, sample_size=20):
+    
+    rewards = np.array(memory.rewards, dtype=np.float32)
+    probabilities = softmax(rewards)
+    probabilities_tensor = torch.tensor(probabilities, dtype=torch.float32).squeeze()
+    
+    sampled_indices = torch.multinomial(probabilities_tensor, num_samples=sample_size, replacement=False)
+    sampled_memory = Memory_deque(maxlen=sample_size)
+
+    # 샘플링된 인덱스에 따라 각 속성 복사
+    for idx in sampled_indices:
+        sampled_memory.actions.append(memory.actions[idx])
+        sampled_memory.states.append(memory.states[idx])
+        sampled_memory.next_states.append(memory.next_states[idx])
+        sampled_memory.candidates.append(memory.candidates[idx])
+        sampled_memory.logprobs.append(memory.logprobs[idx])
+        sampled_memory.rewards.append(memory.rewards[idx])
+        sampled_memory.is_terminals.append(memory.is_terminals[idx])
+
+    sampled_rewards = np.array(sampled_memory.rewards, dtype=np.float32)
+    # print(sampled_rewards)
+    return sampled_memory
+
+def filter_memory(memory, threshold=-0.0):
+    """
+    Filters the memory to remove items with rewards <= threshold.
+    The original memory is updated to only contain the remaining items.
+    """
+    rewards = np.array(memory.rewards, dtype=np.float32)
+    valid_indices = np.where(rewards > threshold)[0]
+
+    memory.actions = deque([memory.actions[i] for i in valid_indices], maxlen=memory.actions.maxlen)
+    memory.states = deque([memory.states[i] for i in valid_indices], maxlen=memory.states.maxlen)
+    memory.next_states = deque([memory.next_states[i] for i in valid_indices], maxlen=memory.next_states.maxlen)
+    memory.candidates = deque([memory.candidates[i] for i in valid_indices], maxlen=memory.candidates.maxlen)
+    memory.logprobs = deque([memory.logprobs[i] for i in valid_indices], maxlen=memory.logprobs.maxlen)
+    memory.rewards = deque([memory.rewards[i] for i in valid_indices], maxlen=memory.rewards.maxlen)
+    memory.is_terminals = deque([memory.is_terminals[i] for i in valid_indices], maxlen=memory.is_terminals.maxlen)
+
+    return memory
+
+def sample_recent_memory(memory, sample_size=20):
+    # 최근 `sample_size`개의 데이터를 추출
+    sampled_memory = Memory_deque(maxlen=sample_size)
+
+    # 슬라이싱으로 최근 데이터 추출
+    sampled_memory.actions.extend(list(memory.actions)[-sample_size:])
+    sampled_memory.states.extend(list(memory.states)[-sample_size:])
+    sampled_memory.next_states.extend(list(memory.next_states)[-sample_size:])
+    sampled_memory.candidates.extend(list(memory.candidates)[-sample_size:])
+    sampled_memory.logprobs.extend(list(memory.logprobs)[-sample_size:])
+    sampled_memory.rewards.extend(list(memory.rewards)[-sample_size:])
+    sampled_memory.is_terminals.extend(list(memory.is_terminals)[-sample_size:])
+
+    return sampled_memory
 
 class ActorCritic(nn.Module):
     def __init__(self, dag_graph, node_feature_dim, node_output_size, batch_norm, one_hot_degree, gnn_layers):
@@ -277,13 +385,15 @@ class GFN(nn.Module):
         states = []
         for state in memory.states:
             states += state
-        actions = torch.cat(memory.actions, dim=1)
-        rewards = torch.tensor(memory.rewards, dtype=torch.float32).to(self.device).flatten()
+        
+
+        actions = torch.cat(list(memory.actions), dim=1)
+        rewards = torch.tensor(list(memory.rewards), dtype=torch.float32).to(self.device).flatten()
         next_states = []
-        for state in memory.next_states:
+        for state in list(memory.next_states):
             next_states += state
         candidates = []
-        for candi in memory.candidates:
+        for candi in list(memory.candidates):
             candidates += candi
         
         # log p(a1, a2) = log p(a1) + log p(a2|a1)
@@ -354,10 +464,12 @@ def main(args):
         summary_writer = None
 
     # get current device (cuda or cpu)
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    device = torch.device("cuda:6" if torch.cuda.is_available() else "cpu")
     
     # init models
-    memory = Memory()
+    # memory = Memory()
+    # memory =  [Memory_deque(maxlen=300) for i in range(args.num_init_dags)]
+    memory = {}
     if args.model == 'ppo':
         ppo = PPO(dag_graph, args, device)
         num_workers = cpu_count()
@@ -413,6 +525,7 @@ def main(args):
                 
                 # update if its time
                 if timestep % args.update_timestep == 0:
+                    
                     closs = ppo.update(memory)
                     critic_loss.append(closs)
                     if summary_writer:
@@ -526,12 +639,15 @@ def main(args):
                 greedy = ori_greedy
                 edge_candidates = dag_graph.get_edge_candidates(inp_graph)
                 items_batch.append(0, inp_graph, greedy, edge_candidates, False, ori_greedy)
-
+            
             for t in range(args.max_timesteps):
                 timestep += 1
                 
                 with torch.no_grad():
-                    action_batch = gfn.act(items_batch.inp_graph, items_batch.edge_candidates, memory)
+                    # action_batch = gfn.act(items_batch.inp_graph, items_batch.edge_candidates, memory)
+                    if graph_index not in list(memory.keys()):
+                        memory[graph_index] = Memory_deque(maxlen=300)
+                    action_batch = gfn.act(items_batch.inp_graph, items_batch.edge_candidates, memory[graph_index])
                     
                 def step_func_feeder(batch_size):
                     batch_inp_graph = items_batch.inp_graph
@@ -551,25 +667,44 @@ def main(args):
                         done = True
                     items_batch.update(b, reward=reward, inp_graph=inp_graph, greedy=greedy,
                                     edge_candidates=edge_candidates, done=done)
-                    
+                
                 # Saving reward and is_terminal:
-                memory.rewards.append(items_batch.reward)
-                memory.is_terminals.append(items_batch.done)
-                memory.next_states.append(items_batch.inp_graph)
-                           
+                memory[graph_index].rewards.append(items_batch.reward)
+                memory[graph_index].is_terminals.append(items_batch.done)
+                memory[graph_index].next_states.append(items_batch.inp_graph)     
+
                 # update if its time
                 if timestep % args.update_timestep == 0:
-                    loss = gfn.update(memory)
+                    # sampling instance and then sampling data 
+                    instance_idx = random.randint(0, len(memory)-1)
+                    sampled_memory = sample_memory(memory[instance_idx])
+                    loss = gfn.update(sampled_memory)
                     gfn_loss.append(loss)
+
                     if summary_writer:
-                        # summary_writer.add_scalar('gfn loss/train', loss, timestep)
                         with summary_writer.as_default():
                             if loss.is_cuda:
                                 loss_value = loss.cpu().item()
                             else:
                                 loss_value = loss.item()
                             tf.summary.scalar('gfn loss/train', loss_value, step=timestep)
-                    memory.clear_memory()
+                            
+                    # sample filtering
+                    # else:
+                    #     sampled_memory = sample_recent_memory(memory,20)
+                    #     memory.trim_recent(20)
+                    #     loss = gfn.update(sampled_memory)
+                    #     gfn_loss.append(loss)
+                    #     if summary_writer:
+                    #         with summary_writer.as_default():
+                    #             if loss.is_cuda:
+                    #                 loss_value = loss.cpu().item()
+                    #             else:
+                    #                 loss_value = loss.item()
+                    #             tf.summary.scalar('gfn loss/train', loss_value, step=timestep)
+                    #     filtered_sampled_memory = filter_memory(sampled_memory)
+                    #     memory.merge(filtered_sampled_memory)
+
 
                 running_reward += sum(items_batch.reward) / args.batch_size
                 if any(items_batch.done):
@@ -698,7 +833,7 @@ def parse_arguments():
     
     
     # GFlowNet
-    parser.add_argument('--model', default='ppo', type=str, help='model name')
+    parser.add_argument('--model', default='gfn', type=str, help='model name')
 
     args = parser.parse_args()
 
@@ -719,7 +854,9 @@ def parse_arguments():
 
 
 if __name__ == '__main__':
+    
     start_time = time.time()
     main(parse_arguments())
-    end_time = time.time()
-    print(f'total elapsed time:{end_time-start_time}')
+            
+    # 실행 시간 기록
+    print(f'total elapsed time: {time.time() - start_time}')
