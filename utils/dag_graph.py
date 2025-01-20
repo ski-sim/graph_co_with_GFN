@@ -26,7 +26,8 @@ class DAGraph(object):
                            features=[0.0] * self.feature_dim)
         assert nx.is_directed_acyclic_graph(new_graph)
         new_greedy = self.makespan_time(new_graph, self.scheduler_type)
-        reward = prev_greedy - new_greedy
+        reward = np.power(prev_greedy - new_greedy,10)
+        # reward = prev_greedy - new_greedy
         edge_candidates = self.get_edge_candidates(new_graph)
         done = all([len(x) == 0 for x in edge_candidates.values()])
         return reward, new_graph, new_greedy, edge_candidates, done

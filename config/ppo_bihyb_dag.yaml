@@ -25,6 +25,6 @@ search_size: 3
 # misc configs
 log_interval: 1
 test_interval: 100
-max_episodes: 1000 #5000
+max_episodes: 1500 #5000
 # test_model_weight: pretrained/test.pt
 test_model_weight: pretrained/PPO_cp_dag_num50_beam3_ratio0.0892.pt

@@ -10,14 +10,15 @@ import random
 import numpy as np
 from torch.multiprocessing import Pool, cpu_count
 from copy import deepcopy
-
+import psutil
 from src.dag_ppo_bihyb_model import ActorNet, CriticNet, GraphEncoder
 from utils.utils import print_args
 from utils.tfboard_helper import TensorboardUtil
 from utils.dag_graph import DAGraph
 from dag_data.dag_generator import load_tpch_tuples
 from dag_ppo_bihyb_eval import evaluate, evaluate_gfn
-
+import psutil
+from collections import deque
 
 class ItemsContainer:
     def __init__(self):
@@ -93,10 +94,8 @@ class Memory:
         del self.rewards[:]
         del self.is_terminals[:]
 
-from collections import deque
-
 class Memory_deque:
-    def __init__(self, maxlen=300):  # maxlen 기본값 설정
+    def __init__(self, maxlen=100):  # maxlen 기본값 설정
         self.actions = deque(maxlen=maxlen)
         self.states = deque(maxlen=maxlen)
         self.next_states = deque(maxlen=maxlen)
@@ -140,8 +139,6 @@ class Memory_deque:
         self.logprobs = deque(list(self.logprobs)[:-sample_size], maxlen=self.logprobs.maxlen)
         self.rewards = deque(list(self.rewards)[:-sample_size], maxlen=self.rewards.maxlen)
         self.is_terminals = deque(list(self.is_terminals)[:-sample_size], maxlen=self.is_terminals.maxlen)
-
-
 
 def softmax(x):
     exp_x = np.exp(x - np.max(x))  # 안정성을 위해 최대값을 빼줌 (overflow 방지)
@@ -465,11 +462,12 @@ def main(args):
 
     # get current device (cuda or cpu)
     device = torch.device("cuda:6" if torch.cuda.is_available() else "cpu")
-    
+    print(device)
     # init models
-    # memory = Memory()
+    memory = Memory()
     # memory =  [Memory_deque(maxlen=300) for i in range(args.num_init_dags)]
-    memory = {}
+    # memory = {} 
+    # memory =  Memory_deque(maxlen=300) 
     if args.model == 'ppo':
         ppo = PPO(dag_graph, args, device)
         num_workers = cpu_count()
@@ -574,6 +572,22 @@ def main(args):
                     f'time per episode: {avg_time:.2f}'
                 )
 
+                #######
+                
+                cpu_usage = psutil.cpu_percent(interval=1)
+
+                # 현재 메모리 사용량 (전체 시스템 기준)
+                virt_memory = psutil.virtual_memory()
+                total_memory = virt_memory.total / (1024 ** 3)  # 전체 메모리 (MB)
+                used_memory = virt_memory.used / (1024 ** 3)    # 사용된 메모리 (MB)
+                free_memory = virt_memory.available / (1024 ** 3)  # 사용 가능한 메모리 (MB)
+
+                # 출력
+                print(f"CPU Usage: {cpu_usage}%")
+                print(f"Total Memory: {total_memory:.2f} GB")
+                print(f"Used Memory: {used_memory:.2f} GB")
+                ######
+
                 running_reward = 0
                 avg_length = 0
                 critic_loss = []
@@ -632,6 +646,7 @@ def main(args):
         
         # training loop
         for i_episode in range(1, args.max_episodes + 1):
+
             items_batch = ItemsContainer()
             for b in range(args.batch_size):
                 graph_index = ((i_episode - 1) * args.batch_size + b) % len(tuples_train)
@@ -644,10 +659,10 @@ def main(args):
                 timestep += 1
                 
                 with torch.no_grad():
-                    # action_batch = gfn.act(items_batch.inp_graph, items_batch.edge_candidates, memory)
-                    if graph_index not in list(memory.keys()):
-                        memory[graph_index] = Memory_deque(maxlen=300)
-                    action_batch = gfn.act(items_batch.inp_graph, items_batch.edge_candidates, memory[graph_index])
+                    action_batch = gfn.act(items_batch.inp_graph, items_batch.edge_candidates, memory)
+                    # if graph_index not in list(memory.keys()):
+                    #     memory[graph_index] = Memory_deque(maxlen=100)
+                    # action_batch = gfn.act(items_batch.inp_graph, items_batch.edge_candidates, memory[graph_index])
                     
                 def step_func_feeder(batch_size):
                     batch_inp_graph = items_batch.inp_graph
@@ -669,15 +684,20 @@ def main(args):
                                     edge_candidates=edge_candidates, done=done)
                 
                 # Saving reward and is_terminal:
-                memory[graph_index].rewards.append(items_batch.reward)
-                memory[graph_index].is_terminals.append(items_batch.done)
-                memory[graph_index].next_states.append(items_batch.inp_graph)     
+                memory.rewards.append(items_batch.reward)
+                memory.is_terminals.append(items_batch.done)
+                memory.next_states.append(items_batch.inp_graph)  
+                # memory[graph_index].rewards.append(items_batch.reward)
+                # memory[graph_index].is_terminals.append(items_batch.done)
+                # memory[graph_index].next_states.append(items_batch.inp_graph)     
 
                 # update if its time
                 if timestep % args.update_timestep == 0:
                     # sampling instance and then sampling data 
-                    instance_idx = random.randint(0, len(memory)-1)
-                    sampled_memory = sample_memory(memory[instance_idx])
+                    # instance_idx = random.randint(0, len(memory)-1)
+                    # sampled_memory = sample_memory(memory[instance_idx])
+                    # if random.random() < 0.5:
+                    sampled_memory = sample_memory(memory)
                     loss = gfn.update(sampled_memory)
                     gfn_loss.append(loss)
 
@@ -688,7 +708,7 @@ def main(args):
                             else:
                                 loss_value = loss.item()
                             tf.summary.scalar('gfn loss/train', loss_value, step=timestep)
-                            
+                        
                     # sample filtering
                     # else:
                     #     sampled_memory = sample_recent_memory(memory,20)
@@ -741,11 +761,24 @@ def main(args):
                     f'reward: {running_reward:.4f} \t '
                     f'time per episode: {avg_time:.2f}'
                 )
-
+                
                 running_reward = 0
                 avg_length = 0
                 gfn_loss = []
                 
+                #######
+                
+                cpu_usage = psutil.cpu_percent(interval=1)
+
+                # 현재 메모리 사용량 (전체 시스템 기준)
+                virt_memory = psutil.virtual_memory()
+                total_memory = virt_memory.total / (1024 ** 3)  # 전체 메모리 (MB)
+                used_memory = virt_memory.used / (1024 ** 3)    # 사용된 메모리 (MB)
+                free_memory = virt_memory.available / (1024 ** 3)  # 사용 가능한 메모리 (MB)
+
+                # 출력
+                print(f"CPU Usage: {cpu_usage}%  Total Memory: {total_memory:.2f} GB  Used Memory: {used_memory:.2f} GB ")
+        
             # testing
             if i_episode % args.test_interval == 0:
                 with torch.no_grad():
@@ -833,7 +866,7 @@ def parse_arguments():
     
     
     # GFlowNet
-    parser.add_argument('--model', default='gfn', type=str, help='model name')
+    parser.add_argument('--model', default='ppo', type=str, help='model name')
 
     args = parser.parse_args()
 
@@ -851,12 +884,23 @@ def parse_arguments():
     print_args(args)
 
     return args
-
-
+# if __name__ == '__main__':
+#     main(parse_arguments()) 
 if __name__ == '__main__':
     
-    start_time = time.time()
-    main(parse_arguments())
+    log_file_path = "dag_gfn_100_priori-Sampling_beta10.txt"
+
+    # stdout을 텍스트 파일로 리디렉션
+    with open(log_file_path, "w") as log_file:
+        sys.stdout = log_file  # stdout을 log_file로 설정
+
+        #메인 함수 실행
+        start_time = time.time()
+        main(parse_arguments())
             
-    # 실행 시간 기록
-    print(f'total elapsed time: {time.time() - start_time}')
+        # 실행 시간 기록
+        print(f'total elapsed time: {time.time() - start_time}')
+
+    # stdout을 원래대로 복구
+    sys.stdout = sys.__stdout__
+

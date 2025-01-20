@@ -2,7 +2,7 @@ import time
 import itertools
 import torch
 import numpy as np
-
+import psutil
 
 def repeat_interleave(inp_list, repeat_num):
     return list(itertools.chain.from_iterable(zip(*itertools.repeat(inp_list, repeat_num))))
@@ -145,6 +145,24 @@ def evaluate(policy_net, dag_graph, eval_graphs, max_steps=10, search_size=10, m
               f'ts {baselines["tetris"]:.4f} \t'
               f'action {bs_result["acts"]} \t'
               f'prob {",".join([f"({x[0]:.3f}, {x[1]:.3f})" for x in bs_result["probs"]])}')
+              
+        cpu_usage = psutil.cpu_percent(interval=1)
+
+        # 현재 메모리 사용량 (전체 시스템 기준)
+        virt_memory = psutil.virtual_memory()
+        total_memory = virt_memory.total / (1024 ** 3)  # 전체 메모리 (MB)
+        used_memory = virt_memory.used / (1024 ** 3)    # 사용된 메모리 (MB)
+        free_memory = virt_memory.available / (1024 ** 3)  # 사용 가능한 메모리 (MB)
+
+        # 출력
+        print(f"CPU Usage: {cpu_usage}%")
+        print(f"Total Memory: {total_memory:.2f} GB")
+        print(f"Used Memory: {used_memory:.2f} GB")
+
+        ###########
+        #######
+        
+        ########
         # record statistics
         ret_result['reward'][f'graph{graph_index}'] = bs_result['reward']
         ret_result['ratio'][f'graph{graph_index}'] = bs_result["reward"] / ori_greedy
@@ -279,6 +297,20 @@ def evaluate_gfn(gfn, dag_graph, eval_graphs, max_steps=10, search_size=10, mp_p
               f'ts {baselines["tetris"]:.4f} \t'
               f'action {bs_result["acts"]} \t'
               f'prob {",".join([f"({x[0]:.3f}, {x[1]:.3f})" for x in bs_result["probs"]])}')
+
+        
+        cpu_usage = psutil.cpu_percent(interval=1)
+
+        # 현재 메모리 사용량 (전체 시스템 기준)
+        virt_memory = psutil.virtual_memory()
+        total_memory = virt_memory.total / (1024 ** 3)  # 전체 메모리 (MB)
+        used_memory = virt_memory.used / (1024 ** 3)    # 사용된 메모리 (MB)
+        free_memory = virt_memory.available / (1024 ** 3)  # 사용 가능한 메모리 (MB)
+
+        # 출력
+        print(f"CPU Usage: {cpu_usage}%  Total Memory: {total_memory:.2f} GB  Used Memory: {used_memory:.2f} GB ")
+
+      
         # record statistics
         ret_result['reward'][f'graph{graph_index}'] = bs_result['reward']
         ret_result['ratio'][f'graph{graph_index}'] = bs_result["reward"] / ori_greedy
@@ -312,7 +344,7 @@ if __name__ == '__main__':
 
     from utils.dag_graph import DAGraph
     from dag_data.dag_generator import load_tpch_tuples
-    from dag_ppo_bihyb_train import ActorCritic, parse_arguments
+    from dag_ppo_bihyb_train import ActorCritic, GFN, parse_arguments
 
     args = parse_arguments()
 
@@ -348,13 +380,16 @@ if __name__ == '__main__':
     device = torch.device("cuda:6" if torch.cuda.is_available() else "cpu")
     print(device)
     # init models
-    ac_params = dag_graph, args.node_feature_dim, args.node_output_size, args.batch_norm, args.one_hot_degree, \
+    # ac_params = dag_graph, args.node_feature_dim, args.node_output_size, args.batch_norm, args.one_hot_degree, \
+    #             args.gnn_layers
+    # policy_net = ActorCritic(*ac_params).to(device)
+    # policy_net.load_state_dict(torch.load(args.test_model_weight, map_location=device)) # 제외
+    ac_params = args.node_feature_dim, args.node_output_size, args.batch_norm, args.one_hot_degree, \
                 args.gnn_layers
-    policy_net = ActorCritic(*ac_params).to(device)
- 
+    policy_net = GFN(dag_graph, args,device).to(device)
     policy_net.load_state_dict(torch.load(args.test_model_weight, map_location=device)) # 제외
     num_workers = cpu_count()
     mp_pool = Pool(num_workers)
 
     with torch.no_grad():
-        evaluate(policy_net, dag_graph, tuples_test, args.max_timesteps, args.search_size, mp_pool)
+        evaluate_gfn(policy_net, dag_graph, tuples_test, args.max_timesteps, args.search_size, mp_pool)
