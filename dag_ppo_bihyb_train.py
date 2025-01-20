@@ -26,14 +26,19 @@ class ItemsContainer:
         self.__inp_graph = []
         self.__ori_greedy = []
         self.__greedy = []
-        self.__edge_candidates = []
+        # self.__edge_candidates = []
+        self.__forward_edge_candidates = []
+        self.__backward_edge_candidates = []
         self.__done = []
 
-    def append(self, reward, inp_graph, greedy, edge_candidates, done, ori_greedy):
+    # def append(self, reward, inp_graph, greedy, edge_candidates, done, ori_greedy):
+    def append(self, reward, inp_graph, greedy, forward_edge_candidates, backward_edge_candidates, done, ori_greedy):
         self.__reward.append(reward)
         self.__inp_graph.append(inp_graph)
         self.__greedy.append(greedy)
-        self.__edge_candidates.append(edge_candidates)
+        # self.__edge_candidates.append(edge_candidates)
+        self.__forward_edge_candidates.append(forward_edge_candidates)
+        self.__backward_edge_candidates.append(backward_edge_candidates)
         self.__done.append(done)
         self.__ori_greedy.append(ori_greedy)
 
@@ -49,9 +54,17 @@ class ItemsContainer:
     def greedy(self):
         return deepcopy(self.__greedy)
 
+    # @property
+    # def edge_candidates(self):
+    #     return deepcopy(self.__edge_candidates)
+    
     @property
-    def edge_candidates(self):
-        return deepcopy(self.__edge_candidates)
+    def forward_edge_candidates(self):
+        return deepcopy(self.__forward_edge_candidates)
+    
+    @property
+    def backward_edge_candidates(self):
+        return deepcopy(self.__backward_edge_candidates)
 
     @property
     def done(self):
@@ -61,15 +74,20 @@ class ItemsContainer:
     def ori_greedy(self):
         return deepcopy(self.__ori_greedy)
 
-    def update(self, idx, reward=None, inp_graph=None, greedy=None, edge_candidates=None, done=None, ori_greedy=None):
+    # def update(self, idx, reward=None, inp_graph=None, greedy=None, edge_candidates=None, done=None, ori_greedy=None):
+    def update(self, idx, reward=None, inp_graph=None, greedy=None, forward_edge_candidates=None, backward_edge_candidates=None, done=None, ori_greedy=None):
         if reward is not None:
             self.__reward[idx] = reward
         if inp_graph is not None:
             self.__inp_graph[idx] = inp_graph
         if greedy is not None:
             self.__greedy[idx] = greedy
-        if edge_candidates is not None:
-            self.__edge_candidates[idx] = edge_candidates
+        # if edge_candidates is not None:
+        #     self.__edge_candidates[idx] = edge_candidates
+        if forward_edge_candidates is not None:
+            self.__forward_edge_candidates[idx] = forward_edge_candidates
+        if backward_edge_candidates is not None:
+            self.__backward_edge_candidates[idx] = backward_edge_candidates
         if done is not None:
             self.__done[idx] = done
         if ori_greedy is not None:
@@ -80,7 +98,9 @@ class Memory:
         self.actions = []
         self.states = []
         self.next_states = []
-        self.candidates = []
+        # self.candidates = []
+        self.forward_candidates = []
+        self.backward_candidates = []
         self.logprobs = []
         self.rewards = []
         self.is_terminals = []
@@ -89,7 +109,9 @@ class Memory:
         del self.actions[:]
         del self.states[:]
         del self.next_states[:]
-        del self.candidates[:]
+        # del self.candidates[:]
+        del self.forward_candidates[:]
+        del self.backward_candidates[:]
         del self.logprobs[:]
         del self.rewards[:]
         del self.is_terminals[:]
@@ -99,7 +121,9 @@ class Memory_deque:
         self.actions = deque(maxlen=maxlen)
         self.states = deque(maxlen=maxlen)
         self.next_states = deque(maxlen=maxlen)
-        self.candidates = deque(maxlen=maxlen)
+        # self.candidates = deque(maxlen=maxlen)
+        self.forward_candidates = deque(maxlen=maxlen)
+        self.backward_candidates = deque(maxlen=maxlen)
         self.logprobs = deque(maxlen=maxlen)
         self.rewards = deque(maxlen=maxlen)
         self.is_terminals = deque(maxlen=maxlen)
@@ -108,7 +132,9 @@ class Memory_deque:
         self.actions.clear()
         self.states.clear()
         self.next_states.clear()
-        self.candidates.clear()
+        # self.candidates.clear()
+        self.forward_candidates.clear()
+        self.backward_candidates.clear()
         self.logprobs.clear()
         self.rewards.clear()
         self.is_terminals.clear()
@@ -121,7 +147,9 @@ class Memory_deque:
             self.actions.extend(other_memory.actions)
             self.states.extend(other_memory.states)
             self.next_states.extend(other_memory.next_states)
-            self.candidates.extend(other_memory.candidates)
+            # self.candidates.extend(other_memory.candidates)
+            self.forward_candidates.extend(other_memory.forward_candidates)
+            self.backward_candidates.extend(other_memory.backward_candidates)
             self.logprobs.extend(other_memory.logprobs)
             self.rewards.extend(other_memory.rewards)
             self.is_terminals.extend(other_memory.is_terminals)
@@ -135,7 +163,9 @@ class Memory_deque:
         self.actions = deque(list(self.actions)[:-sample_size], maxlen=self.actions.maxlen)
         self.states = deque(list(self.states)[:-sample_size], maxlen=self.states.maxlen)
         self.next_states = deque(list(self.next_states)[:-sample_size], maxlen=self.next_states.maxlen)
-        self.candidates = deque(list(self.candidates)[:-sample_size], maxlen=self.candidates.maxlen)
+        # self.candidates = deque(list(self.candidates)[:-sample_size], maxlen=self.candidates.maxlen)
+        self.forward_candidates = deque(list(self.forward_candidates)[:-sample_size], maxlen=self.forward_candidates.maxlen)
+        self.backward_candidates = deque(list(self.backward_candidates)[:-sample_size], maxlen=self.backward_candidates.maxlen)
         self.logprobs = deque(list(self.logprobs)[:-sample_size], maxlen=self.logprobs.maxlen)
         self.rewards = deque(list(self.rewards)[:-sample_size], maxlen=self.rewards.maxlen)
         self.is_terminals = deque(list(self.is_terminals)[:-sample_size], maxlen=self.is_terminals.maxlen)
@@ -158,7 +188,9 @@ def sample_memory(memory, sample_size=20):
         sampled_memory.actions.append(memory.actions[idx])
         sampled_memory.states.append(memory.states[idx])
         sampled_memory.next_states.append(memory.next_states[idx])
-        sampled_memory.candidates.append(memory.candidates[idx])
+        # sampled_memory.candidates.append(memory.candidates[idx])
+        sampled_memory.forward_candidates.append(memory.forward_candidates[idx])
+        sampled_memory.backward_candidates.append(memory.backward_candidates[idx])
         sampled_memory.logprobs.append(memory.logprobs[idx])
         sampled_memory.rewards.append(memory.rewards[idx])
         sampled_memory.is_terminals.append(memory.is_terminals[idx])
@@ -178,7 +210,9 @@ def filter_memory(memory, threshold=-0.0):
     memory.actions = deque([memory.actions[i] for i in valid_indices], maxlen=memory.actions.maxlen)
     memory.states = deque([memory.states[i] for i in valid_indices], maxlen=memory.states.maxlen)
     memory.next_states = deque([memory.next_states[i] for i in valid_indices], maxlen=memory.next_states.maxlen)
-    memory.candidates = deque([memory.candidates[i] for i in valid_indices], maxlen=memory.candidates.maxlen)
+    # memory.candidates = deque([memory.candidates[i] for i in valid_indices], maxlen=memory.candidates.maxlen)
+    memory.forward_candidates = deque([memory.forward_candidates[i] for i in valid_indices], maxlen=memory.forward_candidates.maxlen)
+    memory.backward_candidates = deque([memory.backward_candidates[i] for i in valid_indices], maxlen=memory.backward_candidates.maxlen)
     memory.logprobs = deque([memory.logprobs[i] for i in valid_indices], maxlen=memory.logprobs.maxlen)
     memory.rewards = deque([memory.rewards[i] for i in valid_indices], maxlen=memory.rewards.maxlen)
     memory.is_terminals = deque([memory.is_terminals[i] for i in valid_indices], maxlen=memory.is_terminals.maxlen)
@@ -193,7 +227,9 @@ def sample_recent_memory(memory, sample_size=20):
     sampled_memory.actions.extend(list(memory.actions)[-sample_size:])
     sampled_memory.states.extend(list(memory.states)[-sample_size:])
     sampled_memory.next_states.extend(list(memory.next_states)[-sample_size:])
-    sampled_memory.candidates.extend(list(memory.candidates)[-sample_size:])
+    # sampled_memory.candidates.extend(list(memory.candidates)[-sample_size:])
+    sampled_memory.forward_candidates.extend(list(memory.forward_candidates)[-sample_size:])
+    sampled_memory.backward_candidates.extend(list(memory.backward_candidates)[-sample_size:])
     sampled_memory.logprobs.extend(list(memory.logprobs)[-sample_size:])
     sampled_memory.rewards.extend(list(memory.rewards)[-sample_size:])
     sampled_memory.is_terminals.extend(list(memory.is_terminals)[-sample_size:])
@@ -211,12 +247,16 @@ class ActorCritic(nn.Module):
     def forward(self):
         raise NotImplementedError
 
-    def act(self, inp_graph, edge_candidates, memory):
+    # def act(self, inp_graph, edge_candidates, memory):
+    def act(self, inp_graph, forward_edge_candidates, backward_edge_candidates, memory):
         state_feat = self.state_encoder(inp_graph)
-        actions, action_logits, entropy = self.actor_net(state_feat, edge_candidates)
+        # actions, action_logits, entropy = self.actor_net(state_feat, edge_candidates)
+        actions, action_logits, entropy = self.actor_net(state_feat, forward_edge_candidates)
 
         memory.states.append(inp_graph)
-        memory.candidates.append(edge_candidates)
+        # memory.candidates.append(edge_candidates)
+        memory.forward_candidates.append(forward_edge_candidates)
+        memory.backward_candidates.append(backward_edge_candidates)
         memory.actions.append(actions)
         memory.logprobs.append(action_logits)
 
@@ -266,7 +306,7 @@ class PPO:
 
         with torch.no_grad():
             logprobs, state_values, dist_entropy = \
-                self.policy.evaluate(memory.states[-1], memory.candidates[-1], memory.actions[-1].to(self.device))
+                self.policy.evaluate(memory.states[-1], memory.forward_candidates[-1], memory.actions[-1].to(self.device))
         discounted_reward = state_values
 
         for reward, is_terminal in zip(reversed(memory.rewards), reversed(memory.is_terminals)):
@@ -286,7 +326,8 @@ class PPO:
         old_actions = torch.cat(memory.actions, dim=1)
         old_logprobs = torch.cat(memory.logprobs, dim=1)
         old_candidates = []
-        for candi in memory.candidates:
+        # for candi in memory.candidates:
+        for candi in memory.forward_candidates:
             old_candidates += candi
 
         critic_loss_sum = 0
@@ -360,12 +401,16 @@ class GFN(nn.Module):
             
         self.MseLoss = nn.MSELoss()
         
-    def act(self, inp_graph, edge_candidates, memory):
+    # def act(self, inp_graph, edge_candidates, memory):
+    def act(self, inp_graph, forward_edge_candidates, backward_edge_candidates, memory):
         state_feat = self.state_encoder(inp_graph)
-        actions, action_logits, entropy = self.forward_policy(state_feat, edge_candidates)
+        # actions, action_logits, entropy = self.forward_policy(state_feat, edge_candidates)
+        actions, action_logits, entropy = self.forward_policy(state_feat, forward_edge_candidates)
         
         memory.states.append(inp_graph)
-        memory.candidates.append(edge_candidates)
+        # memory.candidates.append(edge_candidates)
+        memory.forward_candidates.append(forward_edge_candidates)
+        memory.backward_candidates.append(backward_edge_candidates)
         memory.actions.append(actions)
         memory.logprobs.append(action_logits)
         
@@ -389,14 +434,18 @@ class GFN(nn.Module):
         next_states = []
         for state in list(memory.next_states):
             next_states += state
-        candidates = []
-        for candi in list(memory.candidates):
-            candidates += candi
+        forward_candidates = []
+        for candi in list(memory.forward_candidates):
+            forward_candidates += candi
+        backward_candidates = []
+        for candi in list(memory.backward_candidates):
+            backward_candidates += candi
         
         # log p(a1, a2) = log p(a1) + log p(a2|a1)
-        log_pf = self.evaluate(states, candidates, actions).sum(dim=0)
-        # only adding an edge is possible. Therefore, log_pb is always 0
-        log_pb = torch.zeros_like(log_pf).to(self.device)
+        log_pf = self.evaluate(states, forward_candidates, actions).sum(dim=0)
+        # we set pb as uniform policy. pb = 1/(number of possible backward actions from current state)
+        # log_pb = torch.zeros_like(log_pf).to(self.device)
+        log_pb = torch.tensor([1/(sum([len(v) for k, v in candi.items()]) // 2 + 1e-7) for candi in backward_candidates]).to(self.device).log()
         state_feats = self.state_encoder(states)
         log_fs = self.flow_model(state_feats)
 
@@ -404,7 +453,7 @@ class GFN(nn.Module):
         total_loss += log_fs[:-1]
         total_loss += log_pf[:-1]
         total_loss -= log_pb[1:]
-        total_loss += log_fs[1:]
+        total_loss -= log_fs[1:]
         # FL-DB parametrization. We consider reward as intermediate energy function over transitions
         total_loss -= rewards[:-1]
         total_loss = total_loss.pow(2).mean()
@@ -461,7 +510,7 @@ def main(args):
         summary_writer = None
 
     # get current device (cuda or cpu)
-    device = torch.device("cuda:6" if torch.cuda.is_available() else "cpu")
+    device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
     print(device)
     # init models
     memory = Memory()
@@ -488,15 +537,15 @@ def main(args):
                 graph_index = ((i_episode - 1) * args.batch_size + b) % len(tuples_train)
                 inp_graph, ori_greedy, _, baselines = tuples_train[graph_index]  # we treat inp_graph as the state
                 greedy = ori_greedy
-                edge_candidates = dag_graph.get_edge_candidates(inp_graph)
-                items_batch.append(0, inp_graph, greedy, edge_candidates, False, ori_greedy)
+                forward_edge_candidates, backward_edge_candidates = dag_graph.get_edge_candidates(inp_graph, init=True)
+                items_batch.append(0, inp_graph, greedy, forward_edge_candidates, backward_edge_candidates, False, ori_greedy)
 
             for t in range(args.max_timesteps):
                 timestep += 1
 
                 # Running policy_old:
                 with torch.no_grad():
-                    action_batch = ppo.policy_old.act(items_batch.inp_graph, items_batch.edge_candidates, memory)
+                    action_batch = ppo.policy_old.act(items_batch.inp_graph, items_batch.forward_edge_candidates, items_batch.backward_edge_candidates, memory)
 
                 def step_func_feeder(batch_size):
                     batch_inp_graph = items_batch.inp_graph
@@ -511,11 +560,12 @@ def main(args):
                 else:
                     step_list = [dag_graph.step(*x) for x in step_func_feeder(args.batch_size)]
                 for b, item in enumerate(step_list):
-                    reward, inp_graph, greedy, edge_candidates, done = item
+                    reward, inp_graph, greedy, forward_edge_candidates, backward_edge_candidates, done = item
                     if t == args.max_timesteps - 1:
                         done = True
                     items_batch.update(b, reward=reward, inp_graph=inp_graph, greedy=greedy,
-                                    edge_candidates=edge_candidates, done=done)
+                                          forward_edge_candidates=forward_edge_candidates, 
+                                          backward_edge_candidates=backward_edge_candidates, done=done)
 
                 # Saving reward and is_terminal:
                 memory.rewards.append(items_batch.reward)
@@ -652,14 +702,14 @@ def main(args):
                 graph_index = ((i_episode - 1) * args.batch_size + b) % len(tuples_train)
                 inp_graph, ori_greedy, _, baselines = tuples_train[graph_index]  # we treat inp_graph as the state
                 greedy = ori_greedy
-                edge_candidates = dag_graph.get_edge_candidates(inp_graph)
-                items_batch.append(0, inp_graph, greedy, edge_candidates, False, ori_greedy)
+                forward_edge_candidates, backward_edge_candidates = dag_graph.get_edge_candidates(inp_graph, init=True)
+                items_batch.append(0, inp_graph, greedy, forward_edge_candidates, backward_edge_candidates, False, ori_greedy)
             
             for t in range(args.max_timesteps):
                 timestep += 1
                 
                 with torch.no_grad():
-                    action_batch = gfn.act(items_batch.inp_graph, items_batch.edge_candidates, memory)
+                    action_batch = gfn.act(items_batch.inp_graph, items_batch.forward_edge_candidates, items_batch.backward_edge_candidates, memory)
                     # if graph_index not in list(memory.keys()):
                     #     memory[graph_index] = Memory_deque(maxlen=100)
                     # action_batch = gfn.act(items_batch.inp_graph, items_batch.edge_candidates, memory[graph_index])
@@ -677,11 +727,13 @@ def main(args):
                 else:
                     step_list = [dag_graph.step(*x) for x in step_func_feeder(args.batch_size)]
                 for b, item in enumerate(step_list):
-                    reward, inp_graph, greedy, edge_candidates, done = item
+                    reward, inp_graph, greedy, forward_edge_candidates, backward_edge_candidates, done = item
                     if t == args.max_timesteps - 1:
                         done = True
+                    # items_batch.update(b, reward=reward, inp_graph=inp_graph, greedy=greedy,
+                    #                 edge_candidates=edge_candidates, done=done)
                     items_batch.update(b, reward=reward, inp_graph=inp_graph, greedy=greedy,
-                                    edge_candidates=edge_candidates, done=done)
+                                    forward_edge_candidates=forward_edge_candidates, backward_edge_candidates=backward_edge_candidates, done=done)
                 
                 # Saving reward and is_terminal:
                 memory.rewards.append(items_batch.reward)
@@ -884,23 +936,23 @@ def parse_arguments():
     print_args(args)
 
     return args
-# if __name__ == '__main__':
-#     main(parse_arguments()) 
 if __name__ == '__main__':
+    main(parse_arguments()) 
+# if __name__ == '__main__':
     
-    log_file_path = "dag_gfn_100_priori-Sampling_beta10.txt"
+#     log_file_path = "dag_gfn_100_priori-Sampling_beta10.txt"
 
-    # stdout을 텍스트 파일로 리디렉션
-    with open(log_file_path, "w") as log_file:
-        sys.stdout = log_file  # stdout을 log_file로 설정
+#     # stdout을 텍스트 파일로 리디렉션
+#     with open(log_file_path, "w") as log_file:
+#         sys.stdout = log_file  # stdout을 log_file로 설정
 
-        #메인 함수 실행
-        start_time = time.time()
-        main(parse_arguments())
+#         #메인 함수 실행
+#         start_time = time.time()
+#         main(parse_arguments())
             
-        # 실행 시간 기록
-        print(f'total elapsed time: {time.time() - start_time}')
+#         # 실행 시간 기록
+#         print(f'total elapsed time: {time.time() - start_time}')
 
-    # stdout을 원래대로 복구
-    sys.stdout = sys.__stdout__
+#     # stdout을 원래대로 복구
+#     sys.stdout = sys.__stdout__
 

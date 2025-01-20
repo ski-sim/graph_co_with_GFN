@@ -28,9 +28,10 @@ class DAGraph(object):
         new_greedy = self.makespan_time(new_graph, self.scheduler_type)
         reward = np.power(prev_greedy - new_greedy,10)
         # reward = prev_greedy - new_greedy
-        edge_candidates = self.get_edge_candidates(new_graph)
-        done = all([len(x) == 0 for x in edge_candidates.values()])
-        return reward, new_graph, new_greedy, edge_candidates, done
+        # edge_candidates = self.get_edge_candidates(new_graph)
+        forward_edge_candidates, backward_edge_candidates = self.get_edge_candidates(new_graph)
+        done = all([len(x) == 0 for x in forward_edge_candidates.values()])
+        return reward, new_graph, new_greedy, forward_edge_candidates, backward_edge_candidates, done
 
     def step_e2e(self, input_graph, act, prev_makespan):
         new_graph = input_graph.copy()
@@ -231,7 +232,7 @@ class DAGraph(object):
                 next_list = next_list.union(relation_map[relate])
             relates = next_list
 
-    def get_edge_candidates(self, graph):
+    def get_edge_candidates(self, graph, init=False):
         """Candidates are node pairs that are not on any paths.
         This is not a bottle neck yet, but there is no need to repetitively call
         this whole process after adding one single edge.
@@ -244,12 +245,20 @@ class DAGraph(object):
             self.get_relations(children, node, relations)
             relations_map[node] = relations
 
-        edge_candidates = {}
+        forward_edge_candidates = {}
+        backward_edge_candidates = {}
         num_nodes = len(graph.nodes())
         for i in range(num_nodes):
-            edge_candidates[i] = set(range(num_nodes)) - \
+            forward_edge_candidates[i] = set(range(num_nodes)) - \
                                  set([i]) - relations_map[i]
-        return edge_candidates
+            if init:
+                backward_edge_candidates[i] = set()
+            else:
+                backward_edge_candidates[i] = relations_map[i] - self.initial_relations_map[i]
+        # return edge_candidates
+        if init:
+            self.initial_relations_map = relations_map
+        return forward_edge_candidates, backward_edge_candidates
 
     def get_ready_nodes(self, dependency_nodes):
         ready_nodes = []

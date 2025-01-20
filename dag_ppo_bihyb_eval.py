@@ -22,14 +22,14 @@ def beam_search_step_kernel(idx, act_n_sel,
     if act1 in ready_nodes_1 and act2 in ready_nodes_2:
         assert prob1 > 0
         assert prob2 > 0
-        reward, new_graph, new_greedy, edge_candidates, done = \
+        reward, new_graph, new_greedy, forward_edge_candidates,_, done = \
             dag_model.step(graph_list[beam_idx], (act1, act2), orig_greedy)
         return (
                 new_graph,
                 reward,
                 act_list[beam_idx] + [(act1, act2)],
                 prob_list[beam_idx] + [(prob1, prob2)],
-                edge_candidates,
+                forward_edge_candidates,
                 done
         )
     else:
@@ -44,12 +44,14 @@ def beam_search(policy_model, dag_model, inp_graph, greedy_cost, max_actions, be
 
     graph_copy = inp_graph.copy()
     orig_greedy = greedy_cost
+    edge_candidates, _ = dag_model.get_edge_candidates(graph_copy, init=True)
     best_tuple = (
         graph_copy,  # graph
         0,  # accumulated reward
         [],  # actions
         [],  # probabilities
-        dag_model.get_edge_candidates(graph_copy),  # edge candidates
+        # dag_model.get_edge_candidates(graph_copy),  # edge candidates
+        edge_candidates,
         False,  # stop flag
     )
     topk_graphs = [best_tuple]
@@ -197,12 +199,13 @@ def beam_search_gfn(gfn, dag_graph, inp_graph, greedy_cost, max_actions, beam_si
     
     graph_copy = inp_graph.copy()
     orig_greedy = greedy_cost
+    edge_candidates, _ = dag_graph.get_edge_candidates(graph_copy, init=True)
     best_tuple = (
         graph_copy,  # graph
         0,  # accumulated reward
         [],  # actions
         [],  # probabilities
-        dag_graph.get_edge_candidates(graph_copy),  # edge candidates
+        edge_candidates,  # edge candidates
         False,  # stop flag
     )
     topk_graphs = [best_tuple]
