@@ -10,13 +10,16 @@ import random
 import numpy as np
 from torch.multiprocessing import Pool, cpu_count
 from copy import deepcopy
-
+import wandb
 from src.hcp_ppo_bihyb_model import ActorNet, CriticNet, GraphEncoder
 from utils.utils import print_args
 from utils.tfboard_helper import TensorboardUtil
 from hcp_ppo_bihyb_eval import evaluate
 from utils.tsp_env import TSPEnv
-
+import psutil
+wandb.login(key="89cf62dcabfd331d496f3c5f278a9388394a25d4")
+wandb.init(project='HCP_PPO_GFN')
+wandb.run.name = 'ppo_on-policy'
 
 class ItemsContainer:
     def __init__(self):
@@ -248,142 +251,363 @@ def main(args):
 
     # init models
     memory = Memory()
-    ppo = PPO(args, device)
-    num_workers = cpu_count()
-    mp_pool = Pool(num_workers)
+    if args.model == 'ppo':
+        ppo = PPO(args, device)
+        num_workers = cpu_count()
+        mp_pool = Pool(num_workers)
 
-    # logging variables
-    best_test_optimum = 0
-    running_reward = 0
-    critic_loss = []
-    avg_length = 0
-    timestep = 0
-    prev_time = time.time()
+        # logging variables
+        best_test_optimum = 0
+        running_reward = 0
+        critic_loss = []
+        avg_length = 0
+        timestep = 0
+        prev_time = time.time()
 
-    # training loop
-    for i_episode in range(1, args.max_episodes + 1):
-        items_batch = ItemsContainer()
-        for b in range(args.batch_size):
-            graph_index = ((i_episode - 1) * args.batch_size + b) % len(tuples_train)
-            inp_lower_matrix, edge_candidates, ori_greedy, baselines, _ = tuples_train[graph_index]
-            greedy = ori_greedy
-            items_batch.append(0, inp_lower_matrix, edge_candidates, greedy, False, ori_greedy)
+        # training loop
+        for i_episode in range(1, args.max_episodes + 1):
+            items_batch = ItemsContainer()
+            for b in range(args.batch_size):
+                graph_index = ((i_episode - 1) * args.batch_size + b) % len(tuples_train)
+                inp_lower_matrix, edge_candidates, ori_greedy, baselines, _ = tuples_train[graph_index]
+                greedy = ori_greedy
+                items_batch.append(0, inp_lower_matrix, edge_candidates, greedy, False, ori_greedy)
 
-        for t in range(args.max_timesteps):
-            timestep += 1
+            for t in range(args.max_timesteps):
+                timestep += 1
 
-            # Running policy_old:
-            with torch.no_grad():
-                action_batch = ppo.policy_old.act(items_batch.inp_lower_matrix, items_batch.edge_candidates, memory)
+                # Running policy_old:
+                with torch.no_grad():
+                    action_batch = ppo.policy_old.act(items_batch.inp_lower_matrix, items_batch.edge_candidates, memory)
 
-            def step_func_feeder(batch_size):
-                batch_inp_lower_matrix = items_batch.inp_lower_matrix
-                batch_greedy = items_batch.greedy
-                for b in range(batch_size):
-                    yield batch_inp_lower_matrix[b], action_batch[:, b], batch_greedy[b]
+                def step_func_feeder(batch_size):
+                    batch_inp_lower_matrix = items_batch.inp_lower_matrix
+                    batch_greedy = items_batch.greedy
+                    for b in range(batch_size):
+                        yield batch_inp_lower_matrix[b], action_batch[:, b], batch_greedy[b]
 
-            if args.batch_size > 1:
-                pool_map = mp_pool.starmap_async(tsp_env.step, step_func_feeder(args.batch_size))
-                step_list = pool_map.get()
-            else:
-                step_list = [tsp_env.step(*x) for x in step_func_feeder(args.batch_size)]
-            for b, item in enumerate(step_list):
-                reward, inp_lower_matrix, edge_candidates, greedy, done = item
-                if t == args.max_timesteps - 1:
-                    done = True
-                items_batch.update(b, reward=reward, inp_lower_matrix=inp_lower_matrix, edge_candidates=edge_candidates, greedy=greedy, done=done)
+                if args.batch_size > 1:
+                    pool_map = mp_pool.starmap_async(tsp_env.step, step_func_feeder(args.batch_size))
+                    step_list = pool_map.get()
+                else:
+                    step_list = [tsp_env.step(*x) for x in step_func_feeder(args.batch_size)]
+                for b, item in enumerate(step_list):
+                    reward, inp_lower_matrix, edge_candidates, greedy, done = item
+                    if t == args.max_timesteps - 1:
+                        done = True
+                    items_batch.update(b, reward=reward, inp_lower_matrix=inp_lower_matrix, edge_candidates=edge_candidates, greedy=greedy, done=done)
 
-            # Saving reward and is_terminal:
-            memory.rewards.append(items_batch.reward)
-            memory.is_terminals.append(items_batch.done)
+                # Saving reward and is_terminal:
+                memory.rewards.append(items_batch.reward)
+                memory.is_terminals.append(items_batch.done)
 
-            # update if its time
-            if timestep % args.update_timestep == 0:
-                closs = ppo.update(memory)
-                critic_loss.append(closs)
+                # update if its time
+                if timestep % args.update_timestep == 0:
+                    closs = ppo.update(memory)
+                    critic_loss.append(closs)
+                    if summary_writer:
+                        # summary_writer.add_scalar(f'critic mse/train', closs, timestep)
+                        with summary_writer.as_default():  # TensorFlow에서 summary 작성은 이 블록 안에서 수행
+                            if closs.is_cuda:
+                                closs_value = closs.cpu().item()
+                            else:
+                                closs_value = closs.item()
+                            tf.summary.scalar('critic mse/train', closs_value, step=timestep)
+                    memory.clear_memory()
+
+                running_reward += sum(items_batch.reward) / args.batch_size
+                if any(items_batch.done):
+                    break
+
+            avg_length += t+1
+
+            # logging
+            if i_episode % args.log_interval == 0:
+                avg_length = avg_length / args.log_interval
+                running_reward = running_reward / args.log_interval
+                if len(critic_loss) > 0:
+                    critic_loss = torch.mean(torch.stack(critic_loss))
+                else:
+                    critic_loss = -1
+                now_time = time.time()
+                avg_time = (now_time - prev_time) / args.log_interval
+                prev_time = now_time
+
                 if summary_writer:
-                    # summary_writer.add_scalar(f'critic mse/train', closs, timestep)
-                    with summary_writer.as_default():  # TensorFlow에서 summary 작성은 이 블록 안에서 수행
-                        if closs.is_cuda:
-                            closs_value = closs.cpu().item()
-                        else:
-                            closs_value = closs.item()
-                        tf.summary.scalar('critic mse/train', closs_value, step=timestep)
-                memory.clear_memory()
+                    # summary_writer.add_scalar(f'reward/train', running_reward, timestep)
+                    tf.summary.scalar('reward/train', running_reward, step=timestep)
+                    # summary_writer.add_scalar(f'time/train', avg_time, timestep)
+                    tf.summary.scalar('reward/train', avg_time, step=timestep)
+                    for lr_id, x in enumerate(ppo.optimizer.param_groups):
+                        # summary_writer.add_scalar(f'lr/{lr_id}', x['lr'], timestep)
+                        tf.summary.scalar('lr/{lr_id}', x['lr'], step=timestep)
 
-            running_reward += sum(items_batch.reward) / args.batch_size
-            if any(items_batch.done):
-                break
+                print(
+                    f'Episode {i_episode} \t '
+                    f'avg length: {avg_length:.2f} \t '
+                    f'critic mse: {critic_loss:.4f} \t '
+                    f'reward: {running_reward:.4f} \t '
+                    f'time per episode: {avg_time:.2f}'
+                )
+                #############################
+                
+                cpu_usage = psutil.cpu_percent(interval=1)
 
-        avg_length += t+1
+                # 현재 메모리 사용량 (전체 시스템 기준)
+                virt_memory = psutil.virtual_memory()
+                total_memory = virt_memory.total / (1024 ** 3)  # 전체 메모리 (MB)
+                used_memory = virt_memory.used / (1024 ** 3)    # 사용된 메모리 (MB)
+                free_memory = virt_memory.available / (1024 ** 3)  # 사용 가능한 메모리 (MB)
 
-        # logging
-        if i_episode % args.log_interval == 0:
-            avg_length = avg_length / args.log_interval
-            running_reward = running_reward / args.log_interval
-            if len(critic_loss) > 0:
-                critic_loss = torch.mean(torch.stack(critic_loss))
-            else:
-                critic_loss = -1
-            now_time = time.time()
-            avg_time = (now_time - prev_time) / args.log_interval
-            prev_time = now_time
-
-            if summary_writer:
-                # summary_writer.add_scalar(f'reward/train', running_reward, timestep)
-                tf.summary.scalar('reward/train', running_reward, step=timestep)
-                # summary_writer.add_scalar(f'time/train', avg_time, timestep)
-                tf.summary.scalar('reward/train', avg_time, step=timestep)
-                for lr_id, x in enumerate(ppo.optimizer.param_groups):
-                    # summary_writer.add_scalar(f'lr/{lr_id}', x['lr'], timestep)
-                    tf.summary.scalar('lr/{lr_id}', x['lr'], step=timestep)
-
-            print(
-                f'Episode {i_episode} \t '
-                f'avg length: {avg_length:.2f} \t '
-                f'critic mse: {critic_loss:.4f} \t '
-                f'reward: {running_reward:.4f} \t '
-                f'time per episode: {avg_time:.2f}'
-            )
-
-            running_reward = 0
-            avg_length = 0
-            critic_loss = []
+                # 출력
+                print(f"CPU Usage: {cpu_usage}% Total Memory: {total_memory:.2f} GB  Used Memory: {used_memory:.2f} GB")
+                ######
+                wandb.log({
+                    "Episode": i_episode,
+                    "avg_length": avg_length,
+                    "critic mse": critic_loss,
+                    "reward": running_reward,
+                    "time_per_episode": avg_time,
+                    "CPU Usage": cpu_usage,
+                    "Total Memory": total_memory,
+                    "Used Memory": used_memory,
+                },step=i_episode)
+                #############################
+                running_reward = 0
+                avg_length = 0
+                critic_loss = []
+            
+            # testing
+            if i_episode % args.test_interval == 0:
+                with torch.no_grad():
+                    # record time spent on test
+                    prev_test_time = time.time()
+                    #print("########## Evaluate on Train ##########")
+                    #train_dict = evaluate(ppo.policy, dag_graph, tuples_train, args.max_timesteps, args.search_size, mp_pool)
+                    #for key, val in train_dict.items():
+                    #    if isinstance(val, dict):
+                    #        if summary_writer:
+                    #            summary_writer.add_scalars(f'{key}/train-eval', val, timestep)
+                    #    else:
+                    #        if summary_writer:
+                    #            summary_writer.add_scalar(f'{key}/train-eval', val, timestep)
+                    print("########## Evaluate on Test ##########")
+                    # run testing
+                    test_dict = evaluate(ppo.policy, tsp_env, tuples_test, args.max_timesteps, args.search_size, mp_pool)
+                    # # write to summary writter
+                    # for key, val in test_dict.items():
+                    #     if isinstance(val, dict):
+                    #         if summary_writer:
+                    #             summary_writer.add_scalars(f'{key}/test', val, timestep)
+                    #     else:
+                    #         if summary_writer:
+                    #             summary_writer.add_scalar(f'{key}/test', val, timestep)
+                    print("########## Evaluate complete ##########")
+                    # fix running time value
+                    prev_time += time.time() - prev_test_time
+                wandb.log({
+                        "mean_ratio": test_dict["optimum"]["mean"]})
+                if test_dict["optimum"]["mean"] > best_test_optimum:
+                    best_test_optimum = test_dict["optimum"]["mean"]
+                    file_name = f'./PPO_{args.solver_type}_min{args.min_size}_max{args.max_size}' \
+                                f'_beam{args.search_size}_opt{best_test_optimum:.4f}.pt'
+                    torch.save(ppo.policy.state_dict(), file_name)
+    elif args.model == 'gfn':
+        # FL-DB Implementation
+        gfn = GFN(dag_graph, args, device)
+        num_workers = cpu_count()
+        mp_pool = Pool(num_workers)
         
-        # testing
-        if i_episode % args.test_interval == 0:
-            with torch.no_grad():
-                # record time spent on test
-                prev_test_time = time.time()
-                #print("########## Evaluate on Train ##########")
-                #train_dict = evaluate(ppo.policy, dag_graph, tuples_train, args.max_timesteps, args.search_size, mp_pool)
-                #for key, val in train_dict.items():
-                #    if isinstance(val, dict):
-                #        if summary_writer:
-                #            summary_writer.add_scalars(f'{key}/train-eval', val, timestep)
-                #    else:
-                #        if summary_writer:
-                #            summary_writer.add_scalar(f'{key}/train-eval', val, timestep)
-                print("########## Evaluate on Test ##########")
-                # run testing
-                test_dict = evaluate(ppo.policy, tsp_env, tuples_test, args.max_timesteps, args.search_size, mp_pool)
-                # # write to summary writter
-                # for key, val in test_dict.items():
-                #     if isinstance(val, dict):
-                #         if summary_writer:
-                #             summary_writer.add_scalars(f'{key}/test', val, timestep)
-                #     else:
-                #         if summary_writer:
-                #             summary_writer.add_scalar(f'{key}/test', val, timestep)
-                print("########## Evaluate complete ##########")
-                # fix running time value
-                prev_time += time.time() - prev_test_time
+        # logging variables
+        best_test_ratio = 0
+        running_reward = 0
+        gfn_loss = []
+        avg_length = 0
+        timestep = 0
+        prev_time = time.time()
+        
+        # training loop
+        for i_episode in range(1, args.max_episodes + 1):
 
-            if test_dict["optimum"]["mean"] > best_test_optimum:
-                best_test_optimum = test_dict["optimum"]["mean"]
-                file_name = f'./PPO_{args.solver_type}_min{args.min_size}_max{args.max_size}' \
-                            f'_beam{args.search_size}_opt{best_test_optimum:.4f}.pt'
-                torch.save(ppo.policy.state_dict(), file_name)
+            items_batch = ItemsContainer()
+            for b in range(args.batch_size):
+                graph_index = ((i_episode - 1) * args.batch_size + b) % len(tuples_train)
+                inp_graph, ori_greedy, _, baselines = tuples_train[graph_index]  # we treat inp_graph as the state
+                greedy = ori_greedy
+                forward_edge_candidates, backward_edge_candidates = dag_graph.get_edge_candidates(inp_graph, init=True)
+                items_batch.append(0, inp_graph, greedy, forward_edge_candidates, backward_edge_candidates, False, ori_greedy)
+            
+            for t in range(args.max_timesteps):
+                timestep += 1
+                
+                with torch.no_grad():
+                    action_batch = gfn.act(items_batch.inp_graph, items_batch.forward_edge_candidates, items_batch.backward_edge_candidates, memory)
+                    # if graph_index not in list(memory.keys()):
+                    #     memory[graph_index] = Memory_deque(maxlen=100)
+                    # action_batch = gfn.act(items_batch.inp_graph, items_batch.edge_candidates, memory[graph_index])
+                    
+                def step_func_feeder(batch_size):
+                    batch_inp_graph = items_batch.inp_graph
+                    action_batch_cpu = action_batch.cpu()
+                    batch_greedy = items_batch.greedy
+                    for b in range(batch_size):
+                        yield batch_inp_graph[b], action_batch_cpu[:, b], batch_greedy[b]
+                        
+                if args.batch_size > 1:
+                    pool_map = mp_pool.starmap_async(dag_graph.step, step_func_feeder(args.batch_size))
+                    step_list = pool_map.get()
+                else:
+                    step_list = [dag_graph.step(*x) for x in step_func_feeder(args.batch_size)]
+                for b, item in enumerate(step_list):
+                    reward, inp_graph, greedy, forward_edge_candidates, backward_edge_candidates, done = item
+                    if t == args.max_timesteps - 1:
+                        done = True
+                    # items_batch.update(b, reward=reward, inp_graph=inp_graph, greedy=greedy,
+                    #                 edge_candidates=edge_candidates, done=done)
+                    items_batch.update(b, reward=reward, inp_graph=inp_graph, greedy=greedy,
+                                    forward_edge_candidates=forward_edge_candidates, backward_edge_candidates=backward_edge_candidates, done=done)
+                    
+                    
+                # Saving reward and is_terminal:
+                memory.rewards.append(items_batch.reward)
+                memory.is_terminals.append(items_batch.done)
+                memory.next_states.append(items_batch.inp_graph)  
+                # memory[graph_index].rewards.append(items_batch.reward)
+                # memory[graph_index].is_terminals.append(items_batch.done)
+                # memory[graph_index].next_states.append(items_batch.inp_graph)     
+
+                # update if its time
+                if timestep % args.update_timestep == 0:
+                    # sampling instance and then sampling data 
+                    # instance_idx = random.randint(0, len(memory)-1)
+                    # sampled_memory = sample_memory(memory[instance_idx])
+                    # if random.random() < 0.5:
+                    sampled_memory = sample_memory(memory)
+                    loss = gfn.update(sampled_memory)
+                    gfn_loss.append(loss)
+
+                    if summary_writer:
+                        with summary_writer.as_default():
+                            if loss.is_cuda:
+                                loss_value = loss.cpu().item()
+                            else:
+                                loss_value = loss.item()
+                            tf.summary.scalar('gfn loss/train', loss_value, step=timestep)
+                    
+                    # sample filtering
+                    # else:
+                    #     sampled_memory = sample_recent_memory(memory,20)
+                    #     memory.trim_recent(20)
+                    #     loss = gfn.update(sampled_memory)
+                    #     gfn_loss.append(loss)
+                    #     if summary_writer:
+                    #         with summary_writer.as_default():
+                    #             if loss.is_cuda:
+                    #                 loss_value = loss.cpu().item()
+                    #             else:
+                    #                 loss_value = loss.item()
+                    #             tf.summary.scalar('gfn loss/train', loss_value, step=timestep)
+                    #     filtered_sampled_memory = filter_memory(sampled_memory)
+                    #     memory.merge(filtered_sampled_memory)
+
+                
+                running_reward += sum(items_batch.reward) / args.batch_size
+                if any(items_batch.done):
+                    break
+            
+            avg_length += t+1
+            
+            # logging
+            if i_episode % args.log_interval == 0:
+                avg_length = avg_length / args.log_interval
+                running_reward = running_reward / args.log_interval
+                if len(gfn_loss) > 0:
+                    gfn_loss = torch.mean(torch.stack(gfn_loss))
+                else:
+                    gfn_loss = -1
+                now_time = time.time()
+                avg_time = (now_time - prev_time) / args.log_interval
+                prev_time = now_time
+
+                if summary_writer:
+                    # summary_writer.add_scalar('reward/train', running_reward, timestep)
+                    tf.summary.scalar('reward/train', running_reward, step=timestep)
+                    # summary_writer.add_scalar('time/train', avg_time, timestep)
+                    tf.summary.scalar('reward/train', avg_time, step=timestep)
+                    
+                    for lr_id, x in enumerate(gfn.optimizer.param_groups):
+                        # summary_writer.add_scalar(f'lr/{lr_id}', x['lr'], timestep)
+                        tf.summary.scalar('lr/{lr_id}', x['lr'], step=timestep)
+
+                print(
+                    f'Episode {i_episode} \t '
+                    f'avg length: {avg_length:.2f} \t '
+                    f'gfn_loss: {gfn_loss:.4f} \t '
+                    f'reward: {running_reward:.4f} \t '
+                    f'time per episode: {avg_time:.2f}'
+                )
+                             
+                #######
+                cpu_usage = psutil.cpu_percent(interval=1)
+
+                # 현재 메모리 사용량 (전체 시스템 기준)
+                virt_memory = psutil.virtual_memory()
+                total_memory = virt_memory.total / (1024 ** 3)  # 전체 메모리 (MB)
+                used_memory = virt_memory.used / (1024 ** 3)    # 사용된 메모리 (MB)
+                free_memory = virt_memory.available / (1024 ** 3)  # 사용 가능한 메모리 (MB)
+
+                # 출력
+                print(f"CPU Usage: {cpu_usage}%  Total Memory: {total_memory:.2f} GB  Used Memory: {used_memory:.2f} GB ")
+                wandb.log({
+                    "Episode": i_episode,
+                    "avg_length": avg_length,
+                    "gfn_loss": gfn_loss,
+                    "reward": running_reward,
+                    "time_per_episode": avg_time,
+                    "CPU Usage": cpu_usage,
+                    "Total Memory": total_memory,
+                    "Used Memory": used_memory,
+                },step=i_episode)
+                running_reward = 0
+                avg_length = 0
+                gfn_loss = []
+            # testing
+            if i_episode % args.test_interval == 0:
+                with torch.no_grad():
+                    # record time spent on test
+                    prev_test_time = time.time()
+                    #print("########## Evaluate on Train ##########")
+                    #train_dict = evaluate(ppo.policy, dag_graph, tuples_train, args.max_timesteps, args.search_size, mp_pool)
+                    #for key, val in train_dict.items():
+                    #    if isinstance(val, dict):
+                    #        if summary_writer:
+                    #            summary_writer.add_scalars(f'{key}/train-eval', val, timestep)
+                    #    else:
+                    #        if summary_writer:
+                    #            summary_writer.add_scalar(f'{key}/train-eval', val, timestep)
+                    print("########## Evaluate on Test ##########")
+                    # run testing
+                    test_dict = evaluate_gfn(gfn, dag_graph, tuples_test, args.max_timesteps, args.search_size, mp_pool)
+                    # write to summary writter
+                    # for key, val in test_dict.items():
+                    #     if isinstance(val, dict):
+                    #         if summary_writer:
+                    #             # summary_writer.add_scalars(f'{key}/test', val, timestep)
+                    #             tf.summary.scalar('{key}/test', float(val), step=timestep)
+                    #     else:
+                    #         if summary_writer:
+                    #             # summary_writer.add_scalar(f'{key}/test', val, timestep)
+                    #             tf.summary.scalar('{key}/test',float(val), step=timestep)
+                    print("########## Evaluate complete ##########")
+                    # fix running time value
+                    prev_time += time.time() - prev_test_time
+                wandb.log({
+                        "mean_ratio": test_dict["optimum"]["mean"]})
+                if test_dict["optimum"]["mean"] > best_test_optimum:
+                    best_test_optimum = test_dict["optimum"]["mean"]
+                    file_name = f'./GFN_{args.solver_type}_min{args.min_size}_max{args.max_size}' \
+                                f'_beam{args.search_size}_opt{best_test_optimum:.4f}.pt'
+                    torch.save(ppo.policy.state_dict(), file_name)
 
 
 def parse_arguments():
@@ -427,6 +651,9 @@ def parse_arguments():
     parser.add_argument('--test_interval', default=500, type=int, help='run testing in the interval (episodes)')
     parser.add_argument('--log_interval', default=100, type=int, help='print avg reward in the interval (episodes)')
     parser.add_argument('--test_model_weight', default='', type=str, help='the path of model weight to be loaded')
+    
+    # GFlowNet
+    parser.add_argument('--model', default='ppo', type=str, help='model name')
 
     args = parser.parse_args()
 

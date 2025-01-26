@@ -19,7 +19,10 @@ from dag_data.dag_generator import load_tpch_tuples
 from dag_ppo_bihyb_eval import evaluate, evaluate_gfn
 import psutil
 from collections import deque
-
+import wandb
+wandb.login(key="89cf62dcabfd331d496f3c5f278a9388394a25d4")
+wandb.init(project='dag_gfn_50')
+wandb.run.name = 'gfn_off-policy_num100_lr1e-4_beta1'
 class ItemsContainer:
     def __init__(self):
         self.__reward = []
@@ -458,8 +461,15 @@ class GFN(nn.Module):
         total_loss -= rewards[:-1]
         total_loss = total_loss.pow(2).mean()
         
+
         self.optimizer.zero_grad()
         total_loss.backward()
+
+       
+        # gradient clipping
+        torch.nn.utils.clip_grad_norm_(self.state_encoder.parameters(), 5)
+        torch.nn.utils.clip_grad_norm_(self.flow_model.parameters(), 5)
+        torch.nn.utils.clip_grad_norm_(self.forward_policy.parameters(), 5)
         self.optimizer.step()
         if self.lr_scheduler:
             self.lr_scheduler.step()
@@ -510,13 +520,13 @@ def main(args):
         summary_writer = None
 
     # get current device (cuda or cpu)
-    device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+    device = torch.device("cuda:6" if torch.cuda.is_available() else "cpu")
     print(device)
     # init models
-    memory = Memory()
+    # memory = Memory()
     # memory =  [Memory_deque(maxlen=300) for i in range(args.num_init_dags)]
     # memory = {} 
-    # memory =  Memory_deque(maxlen=300) 
+    memory =  Memory_deque(maxlen=300) 
     if args.model == 'ppo':
         ppo = PPO(dag_graph, args, device)
         num_workers = cpu_count()
@@ -608,7 +618,7 @@ def main(args):
                     # summary_writer.add_scalar('reward/train', running_reward, timestep)
                     tf.summary.scalar('reward/train', running_reward, step=timestep)
                     # summary_writer.add_scalar('time/train', avg_time, timestep)
-                    tf.summary.scalar('reward/train', avg_time, step=timestep)
+                    tf.summary.scalar('time/train', avg_time, step=timestep)
                     
                     for lr_id, x in enumerate(ppo.optimizer.param_groups):
                         # summary_writer.add_scalar(f'lr/{lr_id}', x['lr'], timestep)
@@ -633,11 +643,19 @@ def main(args):
                 free_memory = virt_memory.available / (1024 ** 3)  # 사용 가능한 메모리 (MB)
 
                 # 출력
-                print(f"CPU Usage: {cpu_usage}%")
-                print(f"Total Memory: {total_memory:.2f} GB")
-                print(f"Used Memory: {used_memory:.2f} GB")
+                print(f"CPU Usage: {cpu_usage}% Total Memory: {total_memory:.2f} GB  Used Memory: {used_memory:.2f} GB")
                 ######
-
+                wandb.log({
+                    "Episode": i_episode,
+                    "avg_length": avg_length,
+                    "critic mse": critic_loss,
+                    "reward": running_reward,
+                    "time_per_episode": avg_time,
+                    "CPU Usage": cpu_usage,
+                    "Total Memory": total_memory,
+                    "Used Memory": used_memory,
+                },step=i_episode)
+                ###########################33
                 running_reward = 0
                 avg_length = 0
                 critic_loss = []
@@ -672,8 +690,10 @@ def main(args):
                     print("########## Evaluate complete ##########")
                     # fix running time value
                     prev_time += time.time() - prev_test_time
-
+                wandb.log({
+                    "mean_ratio": test_dict["ratio"]["mean"]})
                 if test_dict["ratio"]["mean"] > best_test_ratio:
+                    
                     best_test_ratio = test_dict["ratio"]["mean"]
                     if not os.path.exists('./results'):
                         os.makedirs('./results', exist_ok=True)
@@ -719,7 +739,7 @@ def main(args):
                     action_batch_cpu = action_batch.cpu()
                     batch_greedy = items_batch.greedy
                     for b in range(batch_size):
-                        yield batch_inp_graph[b], action_batch_cpu[:, b], batch_greedy[b]
+                        yield batch_inp_graph[b], action_batch_cpu[:, b], batch_greedy[b], args.beta
                         
                 if args.batch_size > 1:
                     pool_map = mp_pool.starmap_async(dag_graph.step, step_func_feeder(args.batch_size))
@@ -734,7 +754,8 @@ def main(args):
                     #                 edge_candidates=edge_candidates, done=done)
                     items_batch.update(b, reward=reward, inp_graph=inp_graph, greedy=greedy,
                                     forward_edge_candidates=forward_edge_candidates, backward_edge_candidates=backward_edge_candidates, done=done)
-                
+                    
+                    
                 # Saving reward and is_terminal:
                 memory.rewards.append(items_batch.reward)
                 memory.is_terminals.append(items_batch.done)
@@ -760,7 +781,7 @@ def main(args):
                             else:
                                 loss_value = loss.item()
                             tf.summary.scalar('gfn loss/train', loss_value, step=timestep)
-                        
+                    
                     # sample filtering
                     # else:
                     #     sampled_memory = sample_recent_memory(memory,20)
@@ -777,7 +798,7 @@ def main(args):
                     #     filtered_sampled_memory = filter_memory(sampled_memory)
                     #     memory.merge(filtered_sampled_memory)
 
-
+                
                 running_reward += sum(items_batch.reward) / args.batch_size
                 if any(items_batch.done):
                     break
@@ -813,13 +834,8 @@ def main(args):
                     f'reward: {running_reward:.4f} \t '
                     f'time per episode: {avg_time:.2f}'
                 )
-                
-                running_reward = 0
-                avg_length = 0
-                gfn_loss = []
-                
+                             
                 #######
-                
                 cpu_usage = psutil.cpu_percent(interval=1)
 
                 # 현재 메모리 사용량 (전체 시스템 기준)
@@ -827,10 +843,23 @@ def main(args):
                 total_memory = virt_memory.total / (1024 ** 3)  # 전체 메모리 (MB)
                 used_memory = virt_memory.used / (1024 ** 3)    # 사용된 메모리 (MB)
                 free_memory = virt_memory.available / (1024 ** 3)  # 사용 가능한 메모리 (MB)
-
+                if used_memory >=190:
+                    break
                 # 출력
                 print(f"CPU Usage: {cpu_usage}%  Total Memory: {total_memory:.2f} GB  Used Memory: {used_memory:.2f} GB ")
-        
+                wandb.log({
+                    "Episode": i_episode,
+                    "avg_length": avg_length,
+                    "gfn_loss": gfn_loss,
+                    "reward": running_reward,
+                    "time_per_episode": avg_time,
+                    "CPU Usage": cpu_usage,
+                    "Total Memory": total_memory,
+                    "Used Memory": used_memory,
+                },step=i_episode)
+                running_reward = 0
+                avg_length = 0
+                gfn_loss = []
             # testing
             if i_episode % args.test_interval == 0:
                 with torch.no_grad():
@@ -847,7 +876,7 @@ def main(args):
                     #            summary_writer.add_scalar(f'{key}/train-eval', val, timestep)
                     print("########## Evaluate on Test ##########")
                     # run testing
-                    test_dict = evaluate_gfn(gfn, dag_graph, tuples_test, args.max_timesteps, args.search_size, mp_pool)
+                    test_dict = evaluate_gfn(gfn, dag_graph, tuples_test, args.max_timesteps, args.search_size, mp_pool,1)
                     # write to summary writter
                     # for key, val in test_dict.items():
                     #     if isinstance(val, dict):
@@ -861,7 +890,8 @@ def main(args):
                     print("########## Evaluate complete ##########")
                     # fix running time value
                     prev_time += time.time() - prev_test_time
-
+                wandb.log({
+                    "mean_ratio": test_dict["ratio"]["mean"]})
                 if test_dict["ratio"]["mean"] > best_test_ratio:
                     best_test_ratio = test_dict["ratio"]["mean"]
                     # file_name = f'./GFN_{args.scheduler_type}_dag_num{args.num_init_dags}' \
@@ -918,7 +948,8 @@ def parse_arguments():
     
     
     # GFlowNet
-    parser.add_argument('--model', default='ppo', type=str, help='model name')
+    parser.add_argument('--model', default='gfn', type=str, help='model name')
+    parser.add_argument('--beta', default=1, type=int, help='gfn hyper parameter')
 
     args = parser.parse_args()
 
@@ -937,22 +968,8 @@ def parse_arguments():
 
     return args
 if __name__ == '__main__':
-    main(parse_arguments()) 
-# if __name__ == '__main__':
-    
-#     log_file_path = "dag_gfn_100_priori-Sampling_beta10.txt"
+    start_time = time.time()
+    main(parse_arguments())
+    print(f'total time:{time.time()-start_time}')
 
-#     # stdout을 텍스트 파일로 리디렉션
-#     with open(log_file_path, "w") as log_file:
-#         sys.stdout = log_file  # stdout을 log_file로 설정
-
-#         #메인 함수 실행
-#         start_time = time.time()
-#         main(parse_arguments())
-            
-#         # 실행 시간 기록
-#         print(f'total elapsed time: {time.time() - start_time}')
-
-#     # stdout을 원래대로 복구
-#     sys.stdout = sys.__stdout__
 

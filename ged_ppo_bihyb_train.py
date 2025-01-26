@@ -10,13 +10,16 @@ import random
 import numpy as np
 from torch.multiprocessing import Pool, cpu_count
 from copy import deepcopy
-
+import wandb
 from src.ged_ppo_bihyb_model import ActorNet, CriticNet, GraphEncoder
 from utils.utils import print_args
 from utils.tfboard_helper import TensorboardUtil
 from ged_ppo_bihyb_eval import evaluate
 from utils.ged_env import GEDenv
-
+import psutil
+wandb.login(key="89cf62dcabfd331d496f3c5f278a9388394a25d4")
+wandb.init(project='GED_PPO_GFN')
+wandb.run.name = 'ppo_on-policy_AIDS30-50'
 
 class ItemsContainer:
     def __init__(self):
@@ -233,7 +236,7 @@ def main(args):
     args.node_feature_dim = ged_env.feature_dim
 
     # get current device (cuda or cpu)
-    device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+    device = torch.device("cuda:6" if torch.cuda.is_available() else "cpu")
 
     # load training/testing data
     tuples_train = ged_env.generate_tuples(ged_env.training_graphs, args.train_sample, 0, device)
@@ -248,7 +251,8 @@ def main(args):
         from datetime import datetime
         current_time = datetime.now().strftime('%b%d_%H-%M-%S')
         tfboard_path = os.path.join(tfboard_path, current_time + '_' + socket.gethostname())
-        summary_writer = TensorboardUtil(tf.summary.FileWriter(tfboard_path))
+        # summary_writer = TensorboardUtil(tf.summary.FileWriter(tfboard_path))
+        summary_writer = tf.summary.create_file_writer(tfboard_path) 
     except (ModuleNotFoundError, ImportError):
         print('Warning: Tensorboard not loading, please install tensorflow to enable...')
         summary_writer = None
@@ -313,8 +317,14 @@ def main(args):
                 closs = ppo.update(memory)
                 critic_loss.append(closs)
                 if summary_writer:
-                    summary_writer.add_scalar('critic mse/train', closs, timestep)
-                memory.clear_memory()
+                    # summary_writer.add_scalar('critic mse/train', closs, timestep)
+                    with summary_writer.as_default():  # TensorFlow에서 summary 작성은 이 블록 안에서 수행
+                        if closs.is_cuda:
+                            closs_value = closs.cpu().item()
+                        else:
+                            closs_value = closs.item()
+                        tf.summary.scalar('critic mse/train', closs_value, step=timestep)
+                    memory.clear_memory()
 
             running_reward += sum(items_batch.reward) / args.batch_size
             if any(items_batch.done):
@@ -334,11 +344,13 @@ def main(args):
             avg_time = (now_time - prev_time) / args.log_interval
             prev_time = now_time
 
-            if summary_writer:
-                summary_writer.add_scalar('reward/train', running_reward, timestep)
-                summary_writer.add_scalar('time/train', avg_time, timestep)
-                for lr_id, x in enumerate(ppo.optimizer.param_groups):
-                    summary_writer.add_scalar(f'lr/{lr_id}', x['lr'], timestep)
+            #if summary_writer:
+                # summary_writer.add_scalar('reward/train', running_reward, timestep)
+                #tf.summary.scalar('reward/train', running_reward, step=timestep)
+                # summary_writer.add_scalar('time/train', avg_time, timestep)
+                #tf.summary.scalar('time/train', avg_time, step=timestep)
+            #    for lr_id, x in enumerate(ppo.optimizer.param_groups):
+            #        summary_writer.add_scalar(f'lr/{lr_id}', x['lr'], timestep)
 
             print(
                 f'Episode {i_episode} \t '
@@ -347,7 +359,30 @@ def main(args):
                 f'reward: {running_reward.item():.4f} \t '
                 f'time per episode: {avg_time:.2f}'
             )
+            #############################
+            
+            cpu_usage = psutil.cpu_percent(interval=1)
 
+            # 현재 메모리 사용량 (전체 시스템 기준)
+            virt_memory = psutil.virtual_memory()
+            total_memory = virt_memory.total / (1024 ** 3)  # 전체 메모리 (MB)
+            used_memory = virt_memory.used / (1024 ** 3)    # 사용된 메모리 (MB)
+            free_memory = virt_memory.available / (1024 ** 3)  # 사용 가능한 메모리 (MB)
+
+            # 출력
+            print(f"CPU Usage: {cpu_usage}% Total Memory: {total_memory:.2f} GB  Used Memory: {used_memory:.2f} GB")
+            ######
+            wandb.log({
+                "Episode": i_episode,
+                "avg_length": avg_length,
+                "critic mse": critic_loss,
+                "reward": running_reward,
+                "time_per_episode": avg_time,
+                "CPU Usage": cpu_usage,
+                "Total Memory": total_memory,
+                "Used Memory": used_memory,
+            },step=i_episode)
+            #############################
             running_reward = 0
             avg_length = 0
             critic_loss = []
@@ -371,17 +406,18 @@ def main(args):
                 test_dict = evaluate(ppo.policy, ged_env, tuples_test, args.max_timesteps, args.search_size,
                                      None if torch.cuda.is_available() else mp_pool)
                 # write to summary writter
-                for key, val in test_dict.items():
-                    if isinstance(val, dict):
-                        if summary_writer:
-                            summary_writer.add_scalars(f'{key}/test', val, timestep)
-                    else:
-                        if summary_writer:
-                            summary_writer.add_scalar(f'{key}/test', val, timestep)
+                #for key, val in test_dict.items():
+                #    if isinstance(val, dict):
+                #        if summary_writer:
+                #            summary_writer.add_scalars(f'{key}/test', val, timestep)
+                #    else:
+                #        if summary_writer:
+                #            summary_writer.add_scalar(f'{key}/test', val, timestep)
                 print("########## Evaluate complete ##########")
                 # fix running time value
                 prev_time += time.time() - prev_test_time
-
+            wandb.log({
+                    "mean_ratio": test_dict["ratio"]["mean"]})
             if test_dict["ratio"]["mean"] > best_test_ratio:
                 best_test_ratio = test_dict["ratio"]["mean"]
                 file_name = f'./PPO_{args.solver_type}_dataset{args.dataset}' \

@@ -1,6 +1,6 @@
 # environment configs
 solver_type: ipfp
-dataset: AIDS-20-30
+dataset: AIDS-30-50
 gamma: 0.95
 train_sample: 50
 test_sample: 10
@@ -23,6 +23,6 @@ search_size: 3
 
 # misc configs
 log_interval: 1
-test_interval: 200
-max_episodes: 10000
+test_interval: 100
+max_episodes: 2000
 test_model_weight: pretrained/PPO_ipfp_datasetAIDS-20-30_beam3_ratio0.2117.pt

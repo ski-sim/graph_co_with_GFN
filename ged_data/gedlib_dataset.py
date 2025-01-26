@@ -101,7 +101,8 @@ class GEDDataset(InMemoryDataset):
 
     @property
     def raw_file_names(self):
-        return [self.datasets[self.name]['data_dir']]
+        # return [self.datasets[self.name]['data_dir']]
+        return ['../../AIDS/data']
 
     @property
     def processed_file_names(self):
@@ -111,26 +112,29 @@ class GEDDataset(InMemoryDataset):
         if all([osp.exists(osp.join(self.raw_dir, p)) for p in self.raw_file_names]):
             pass
         else:
-            retcode = os.system('svn checkout ' + self.url.format(self.datasets[self.name]['data_dir']) +
-                                ' {}/{}'.format(self.raw_dir, self.datasets[self.name]['data_dir']))
-            svn_command = 'svn checkout ' + self.url.format(self.datasets[self.name]['data_dir']) 
-            print("SVN Command: ", svn_command)
-            retcode = os.system(svn_command)
+            pass
+        #    retcode = os.system('svn checkout ' + self.url.format(self.datasets[self.name]['data_dir']) +
+        #                        ' {}/{}'.format(self.raw_dir, self.datasets[self.name]['data_dir']))
+        #    svn_command = 'svn checkout ' + self.url.format(self.datasets[self.name]['data_dir']) 
+        #    print("SVN Command: ", svn_command)
+        #    retcode = os.system(svn_command)
 
-            assert retcode == 0
+        #            assert retcode == 0
 
     def process(self):
         Ns = []
         assert len(self.raw_paths) == 1
         assert len(self.processed_paths) == 1
-        paths = glob.glob(osp.join(self.raw_paths[0], '*.gxl'))
+        #paths = glob.glob(osp.join(self.raw_paths[0], '*.gxl'))
+        paths = glob.glob(osp.join('/home/wewe1117/python_folder/graph_co_with_GFN/AIDS/data','*.gxl'))
+        
         names = sorted([i.split(os.sep)[-1] for i in paths], key=lambda x: re.findall(r'[0-9]+', x)[0])
-
         data_list = []
         i_offset = 0
-        num_nodes_count = np.zeros(self.datasets[self.name]['max_nodes'] - self.datasets[self.name]['min_nodes'] + 1, dtype=np.int)
+        num_nodes_count = np.zeros(self.datasets[self.name]['max_nodes'] - self.datasets[self.name]['min_nodes'] + 1, dtype=int)
         for i, name in enumerate(names):
-            G = read_gxl(osp.join(self.raw_paths[0], name))
+            #G = read_gxl(osp.join(self.raw_paths[0], name))
+            G = read_gxl(osp.join('/home/wewe1117/python_folder/graph_co_with_GFN/AIDS/data',name))
             mapping = {name: j for j, name in enumerate(G.nodes())}
             G = nx.relabel_nodes(G, mapping)
 
@@ -147,7 +151,6 @@ class GEDDataset(InMemoryDataset):
 
             data = Data(edge_index=edge_index, i=i-i_offset)
             data.num_nodes = G.number_of_nodes()
-
             if 'AIDS' in self.name:
                 x = torch.zeros(data.num_nodes, dtype=torch.long)
                 try:

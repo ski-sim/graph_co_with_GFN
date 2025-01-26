@@ -10,7 +10,7 @@ def repeat_interleave(inp_list, repeat_num):
 
 def beam_search_step_kernel(idx, act_n_sel,
                             acts1, acts2, probs1, probs2, ready_nodes1, ready_nodes2_flat,
-                            graph_list, act_list, prob_list, orig_greedy, dag_model):
+                            graph_list, act_list, prob_list, orig_greedy, dag_model,beta):
     beam_idx = idx // act_n_sel ** 2
     act1_idx = idx // act_n_sel % act_n_sel
     act2_idx = idx % act_n_sel
@@ -23,7 +23,7 @@ def beam_search_step_kernel(idx, act_n_sel,
         assert prob1 > 0
         assert prob2 > 0
         reward, new_graph, new_greedy, forward_edge_candidates,_, done = \
-            dag_model.step(graph_list[beam_idx], (act1, act2), orig_greedy)
+            dag_model.step(graph_list[beam_idx], (act1, act2), orig_greedy,beta)
         return (
                 new_graph,
                 reward,
@@ -95,7 +95,7 @@ def beam_search(policy_model, dag_model, inp_graph, greedy_cost, max_actions, be
                     idx, act_n_sel,
                     acts1, acts2, probs1, probs2, ready_nodes1, ready_nodes2_flat,
                     graph_list, act_list, prob_list,
-                    orig_greedy, dag_model
+                    orig_greedy, dag_model,1
                 )
 
         if multiprocess_pool:
@@ -119,7 +119,6 @@ def beam_search(policy_model, dag_model, inp_graph, greedy_cost, max_actions, be
         for g in searched_graphs[:beam_size]:
             if not g[5]:
                 topk_graphs.append(g)
-
     return {
         'reward': best_tuple[1],
         'solution': orig_greedy - best_tuple[1],
@@ -157,9 +156,7 @@ def evaluate(policy_net, dag_graph, eval_graphs, max_steps=10, search_size=10, m
         free_memory = virt_memory.available / (1024 ** 3)  # 사용 가능한 메모리 (MB)
 
         # 출력
-        print(f"CPU Usage: {cpu_usage}%")
-        print(f"Total Memory: {total_memory:.2f} GB")
-        print(f"Used Memory: {used_memory:.2f} GB")
+        print(f"CPU Usage: {cpu_usage}% Total Memory: {total_memory:.2f} GB Used Memory: {used_memory:.2f} GB")
 
         ###########
         #######
@@ -191,7 +188,7 @@ def evaluate(policy_net, dag_graph, eval_graphs, max_steps=10, search_size=10, m
           f' mean ratio {ret_result["ratio"]["mean"]:.4f}')
     return ret_result
 
-def beam_search_gfn(gfn, dag_graph, inp_graph, greedy_cost, max_actions, beam_size=5, multiprocess_pool=None):
+def beam_search_gfn(gfn, dag_graph, inp_graph, greedy_cost, max_actions, beam_size=5, multiprocess_pool=None,beta=1):
     start_time = time.time()
     
     state_encoder = gfn.state_encoder 
@@ -249,7 +246,7 @@ def beam_search_gfn(gfn, dag_graph, inp_graph, greedy_cost, max_actions, beam_si
                     idx, act_n_sel,
                     acts1, acts2, probs1, probs2, ready_nodes1, ready_nodes2_flat,
                     graph_list, act_list, prob_list,
-                    orig_greedy, dag_graph
+                    orig_greedy, dag_graph,beta
                 )
                 
         if multiprocess_pool:
@@ -282,12 +279,12 @@ def beam_search_gfn(gfn, dag_graph, inp_graph, greedy_cost, max_actions, beam_si
         'time': time.time() - start_time,
     }
 
-def evaluate_gfn(gfn, dag_graph, eval_graphs, max_steps=10, search_size=10, mp_pool=None):
+def evaluate_gfn(gfn, dag_graph, eval_graphs, max_steps=10, search_size=10, mp_pool=None, beta=1):
     ret_result = {'reward': {}, 'ratio': {}, 'solution': {}, 'gap': {}, 'num_act': {}, 'time': {}}
     # Load test graphs
     for graph_index, (inp_graph, ori_greedy, _, baselines) in enumerate(eval_graphs):
         # Running beam search:
-        bs_result = beam_search_gfn(gfn, dag_graph, inp_graph, ori_greedy, max_steps, search_size, mp_pool)
+        bs_result = beam_search_gfn(gfn, dag_graph, inp_graph, ori_greedy, max_steps, search_size, mp_pool,beta)
         print(f'BEAMSEARCH \t'
               f'gid {graph_index} \t'
               f'time {bs_result["time"]:.2f} \t'
@@ -390,7 +387,7 @@ if __name__ == '__main__':
     ac_params = args.node_feature_dim, args.node_output_size, args.batch_norm, args.one_hot_degree, \
                 args.gnn_layers
     policy_net = GFN(dag_graph, args,device).to(device)
-    policy_net.load_state_dict(torch.load(args.test_model_weight, map_location=device)) # 제외
+    policy_net.load_state_dict(torch.load(args.test_model_weight, map_location=device,weights_only=True)) # 제외
     num_workers = cpu_count()
     mp_pool = Pool(num_workers)
 

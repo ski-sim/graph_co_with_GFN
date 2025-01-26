@@ -1,6 +1,6 @@
 # environment configs
 scheduler_type: cp
-num_init_dags: 50
+num_init_dags: 100
 gamma: 0.95
 resource_limit: 6000
 train_sample: 50
@@ -12,12 +12,13 @@ lr_steps: []
 max_timesteps: 20
 k_epochs: 10
 update_timestep: 20
-learning_rate: 0.001
+learning_rate:  0.0001 # 0.001
 eps_clip: 0.1
 
 # model parameters
 node_output_size: 64 #16
 gnn_layers: 5
+beta : 1
 
 # test parameters
 search_size: 3
@@ -25,6 +26,7 @@ search_size: 3
 # misc configs
 log_interval: 1
 test_interval: 100
-max_episodes: 1500 #5000
-# test_model_weight: pretrained/test.pt
-test_model_weight: pretrained/PPO_cp_dag_num50_beam3_ratio0.0892.pt
+max_episodes: 2000 #5000
+test_model_weight: results/GFN_cp_dag_num50_beam3_ratio0.1131.pt
+# test_model_weight: pretrained/PPO_cp_dag_num50_beam3_ratio0.0892.pt
+

@@ -18,7 +18,7 @@ class DAGraph(object):
         self.scheduler_type = scheduler_type
         self.resource_limits = np.array([1.0] * resource_dim)
 
-    def step(self, input_graph, act, prev_greedy):
+    def step(self, input_graph, act, prev_greedy, beta):
         new_graph = input_graph.copy()
         if isinstance(act, torch.Tensor):
             act = (act[0].item(), act[1].item())
@@ -26,8 +26,7 @@ class DAGraph(object):
                            features=[0.0] * self.feature_dim)
         assert nx.is_directed_acyclic_graph(new_graph)
         new_greedy = self.makespan_time(new_graph, self.scheduler_type)
-        reward = np.power(prev_greedy - new_greedy,10)
-        # reward = prev_greedy - new_greedy
+        reward = np.power(prev_greedy - new_greedy,beta)
         # edge_candidates = self.get_edge_candidates(new_graph)
         forward_edge_candidates, backward_edge_candidates = self.get_edge_candidates(new_graph)
         done = all([len(x) == 0 for x in forward_edge_candidates.values()])

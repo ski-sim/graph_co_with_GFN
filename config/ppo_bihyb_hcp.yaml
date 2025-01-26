@@ -1,7 +1,7 @@
 # environment configs
 solver_type: lkh-fast
 min_size: 34
-max_size: 103 #104
+max_size: 104
 gamma: 0.95
 train_sample: 50
 test_sample: 20
@@ -25,6 +25,6 @@ search_size: 12
 # misc configs
 log_interval: 1
 test_interval: 100
-max_episodes: 200
+max_episodes: 2000
 # test_model_weight: pretrained/PPO_lkh-fast_min34_max103_beam12_opt0.2500.pt
 test_model_weight: pretrained/test.pt

@@ -81,7 +81,7 @@ class GEDenv(object):
         for i, (idx_1, idx_2) in enumerate(indices):
             graph1, graph2 = graphs_dataset[idx_1].to(device), graphs_dataset[idx_2].to(device)
             ori_k = self.construct_k(graph1, graph2).squeeze(0)
-            ged_label = (self.nged_matrix[graph1["i"], graph2["i"]] * 0.5 * (graph1.num_nodes + graph2.num_nodes)).to(device)
+            ged_label = (self.nged_matrix[graph1["i"].to(self.nged_matrix.device), graph2["i"].to(self.nged_matrix.device)] * 0.5 * (graph1.num_nodes + graph2.num_nodes)).to(device)
             ged_solutions = {}
             ged_times = {}
             for key in self.available_solvers:
@@ -240,6 +240,11 @@ class GEDenv(object):
             assert self.ori_feature_dim == 0
             encoding = torch.sum(torch.abs(node1.unsqueeze(2) - node2.unsqueeze(1)), dim=-1).to(dtype=torch.long)
             mapping = torch.Tensor([0, 1, 0])
+
+        # indices should be either on cpu or on the same device
+        device = torch.device("cuda:6" if torch.cuda.is_available() else "cpu")
+        mapping = mapping.to(device)  
+        encoding = encoding.to(device) 
         return mapping[encoding]
 
     @staticmethod
