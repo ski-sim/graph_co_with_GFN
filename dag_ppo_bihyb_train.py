@@ -273,6 +273,8 @@ class ActorCritic(nn.Module):
         return action_logits, state_value, entropy
 
 
+    
+
 class PPO:
     def __init__(self, dag_graph, args, device):
         self.lr = args.learning_rate
@@ -434,6 +436,7 @@ class GFN(nn.Module):
 
         actions = torch.cat(list(memory.actions), dim=1)
         rewards = torch.tensor(list(memory.rewards), dtype=torch.float32).to(self.device).flatten()
+        
         next_states = []
         for state in list(memory.next_states):
             next_states += state
@@ -448,6 +451,7 @@ class GFN(nn.Module):
         log_pf = self.evaluate(states, forward_candidates, actions).sum(dim=0)
         # we set pb as uniform policy. pb = 1/(number of possible backward actions from current state)
         # log_pb = torch.zeros_like(log_pf).to(self.device)
+        print(backward_candidates)
         log_pb = torch.tensor([1/(sum([len(v) for k, v in candi.items()]) // 2 + 1e-7) for candi in backward_candidates]).to(self.device).log()
         state_feats = self.state_encoder(states)
         log_fs = self.flow_model(state_feats)
@@ -843,7 +847,7 @@ def main(args):
                 total_memory = virt_memory.total / (1024 ** 3)  # 전체 메모리 (MB)
                 used_memory = virt_memory.used / (1024 ** 3)    # 사용된 메모리 (MB)
                 free_memory = virt_memory.available / (1024 ** 3)  # 사용 가능한 메모리 (MB)
-                if used_memory >=190:
+                if used_memory >=200:
                     break
                 # 출력
                 print(f"CPU Usage: {cpu_usage}%  Total Memory: {total_memory:.2f} GB  Used Memory: {used_memory:.2f} GB ")

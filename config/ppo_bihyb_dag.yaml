@@ -1,6 +1,6 @@
 # environment configs
 scheduler_type: cp
-num_init_dags: 100
+num_init_dags: 50
 gamma: 0.95
 resource_limit: 6000
 train_sample: 50

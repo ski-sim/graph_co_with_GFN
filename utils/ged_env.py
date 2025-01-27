@@ -107,7 +107,7 @@ class GEDenv(object):
                   f'std={np.std([tup[4][solver_name] for tup in return_tuples]):.4f}')
         return return_tuples
 
-    def step(self, graph_1, graph_2, ori_k, act, prev_solution):
+    def step(self, graph_1, graph_2, ori_k, act, prev_solution,beta):
         new_graph_1 = graph_1.clone()
         assert isinstance(act, torch.Tensor)
         act = act.unsqueeze(1)
@@ -120,8 +120,61 @@ class GEDenv(object):
         else:  # add edge
             new_graph_1.edge_index = torch.cat((new_graph_1.edge_index, act, act.flip(dims=(0,))), dim=1)
         new_solution, _, __ = self.solve_feasible_ged(new_graph_1, graph_2, self.solver_type, ori_k=ori_k)
-        reward = prev_solution - new_solution
-        return reward, new_graph_1, new_solution
+        # reward = np.power(prev_solution - new_solution,beta)
+        reward = np.power((prev_solution - new_solution).cpu().numpy(), beta)
+
+        
+        forward_edge_candidates, backward_edge_candidates = self.get_edge_candidates(new_graph_1)
+        return reward, new_graph_1, new_solution, forward_edge_candidates, backward_edge_candidates
+
+    def get_dependency_nodes(self, graph):
+        parents = {}
+        children = {}
+        for node in range(graph.num_nodes):
+            parents[node] = set()
+            children[node] = set()
+
+        edge_index = graph.edge_index.cpu().numpy()
+        for from_node, to_node in edge_index.T:
+
+            parents[int(to_node)].add(int(from_node))
+    
+            # children[int(from_node)].add(int(to_node))
+        return parents#, children
+
+    def get_relations(self, relation_map, node, relations):
+        
+        relates = relation_map[node]
+        while relates:
+            next_list = set()
+            for relate in relates:
+                relations.add(relate)
+                next_list = next_list.union(relation_map[relate])
+            relates = next_list
+
+    def get_edge_candidates(self, graph, init=False):
+        """Candidates are node pairs that are not on any paths.
+        This is not a bottle neck yet, but there is no need to repetitively call
+        this whole process after adding one single edge.
+        """
+        relations_map = {}
+        edges = self.get_dependency_nodes(graph)
+        self.initial_edges = edges
+        forward_edge_candidates = {}
+        backward_edge_candidates = {}
+        for i in range(graph.num_nodes):
+            forward_edge_candidates[i] = set(range(graph.num_nodes)) 
+            if init:
+                backward_edge_candidates[i] = set()
+            else:
+                # backward_edge_candidates[i] = relations_map[i] - self.initial_relations_map[i]
+                backward_edge_candidates[i] = (edges[i] | self.initial_edges[i]) - (edges[i] & self.initial_edges[i])
+        # return edge_candidates
+        if init:
+            self.initial_edges = edges
+        
+        return forward_edge_candidates, backward_edge_candidates
+
 
     def step_e2e(self, partial_x, ori_k, act, prev_solution):
         new_x = partial_x.clone()

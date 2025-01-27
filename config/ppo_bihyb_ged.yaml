@@ -1,6 +1,6 @@
 # environment configs
 solver_type: ipfp
-dataset: AIDS-30-50
+dataset: AIDS-20-30
 gamma: 0.95
 train_sample: 50
 test_sample: 10

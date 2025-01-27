@@ -238,6 +238,8 @@ class DAGraph(object):
         """
         relations_map = {}
         parents, children, _ = self.get_dependency_nodes(graph)
+        print(parents)
+        print(children)
         for node in graph.nodes(data=False):
             relations = set()
             self.get_relations(parents, node, relations)
