@@ -272,18 +272,15 @@ class PPO:
         for _ in range(self.K_epochs):
             # Evaluating old actions and values :
             logprobs, state_values, dist_entropy = self.policy.evaluate(old_graph_1, old_graph_2, old_actions)
-            print('logprobs',logprobs)
-            print('old_logprobs',old_logprobs)
+            
             # Finding the ratio (pi_theta / pi_theta__old):
             ratios = torch.exp(logprobs - old_logprobs)
 
             # Normalizing advantages
-            print('rewards',rewards)
-            print('state_values',state_values)
+            
             advantages = rewards - state_values.detach()
             #advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-5)
-            print(ratios)
-            print(advantages)
+            
             # Finding Surrogate Loss:
             surr1 = ratios * advantages
             surr2 = torch.clamp(ratios, 1 - self.eps_clip, 1 + self.eps_clip) * advantages
@@ -337,7 +334,7 @@ class GFN:
 
         self.MseLoss = nn.MSELoss()
 
-    # 수정완료
+    
     def act(self, inp_graph_1, inp_graph_2, forward_edge_candidates, backward_edge_candidates, memory):
         diff_feat, graph_feat_1, graph_feat_2 = self.state_encoder(inp_graph_1, inp_graph_2)
         actions, action_logits, entropy = self.forward_policy(diff_feat)
@@ -350,7 +347,7 @@ class GFN:
         
         return actions
     
-    # 수정완료
+    
     def evaluate(self, inp_graph_1, inp_graph_2, action):
         diff_feat, graph_feat_1, graph_feat_2 = self.state_encoder(inp_graph_1, inp_graph_2)
         _, action_logits, entropy = self.forward_policy(diff_feat, action)
@@ -428,21 +425,6 @@ def main(args):
     # load training/testing data
     tuples_train = ged_env.generate_tuples(ged_env.training_graphs, args.train_sample, 0, device)
     tuples_test = ged_env.generate_tuples(ged_env.val_graphs, args.test_sample, 1, device)
-
-    # create tensorboard summary writer
-    try:
-        import tensorflow as tf
-        # local mode: logs stored in ./runs/TIME_STAMP-MACHINE_ID
-        tfboard_path = 'runs'
-        import socket
-        from datetime import datetime
-        current_time = datetime.now().strftime('%b%d_%H-%M-%S')
-        tfboard_path = os.path.join(tfboard_path, current_time + '_' + socket.gethostname())
-        # summary_writer = TensorboardUtil(tf.summary.FileWriter(tfboard_path))
-        summary_writer = tf.summary.create_file_writer(tfboard_path) 
-    except (ModuleNotFoundError, ImportError):
-        print('Warning: Tensorboard not loading, please install tensorflow to enable...')
-        summary_writer = None
 
     # init models
     memory = Memory()

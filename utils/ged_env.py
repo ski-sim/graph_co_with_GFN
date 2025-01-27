@@ -122,10 +122,9 @@ class GEDenv(object):
         new_solution, _, __ = self.solve_feasible_ged(new_graph_1, graph_2, self.solver_type, ori_k=ori_k)
         # reward = np.power(prev_solution - new_solution,beta)
         reward = np.power((prev_solution - new_solution).cpu().numpy(), beta)
-
         
         forward_edge_candidates, backward_edge_candidates = self.get_edge_candidates(new_graph_1)
-        return reward, new_graph_1, new_solution, forward_edge_candidates, backward_edge_candidates
+        return reward[0], new_graph_1, new_solution, forward_edge_candidates, backward_edge_candidates
 
     def get_dependency_nodes(self, graph):
         parents = {}

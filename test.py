@@ -192,21 +192,16 @@ class PPO:
         for _ in range(self.K_epochs):
             # Evaluating old actions and values :
             logprobs, state_values, dist_entropy = self.policy.evaluate(old_graph_1, old_graph_2, old_actions)
-            print('logprobs',logprobs)
-            print('old_logprobs',old_logprobs)
+
             # Finding the ratio (pi_theta / pi_theta__old):
             ratios = torch.exp(logprobs - old_logprobs)
 
             # Normalizing advantages
-            print('rewards',rewards)
-            print('state_values',state_values)
             advantages = rewards - state_values.detach()
             #advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-5)
 
             # Finding Surrogate Loss:
             surr1 = ratios * advantages
-            print(ratios)
-            print(advantages)
             surr2 = torch.clamp(ratios, 1 - self.eps_clip, 1 + self.eps_clip) * advantages
             actor_loss = -torch.min(surr1, surr2)
             critic_loss = self.MseLoss(state_values, rewards)
@@ -244,7 +239,7 @@ def main(args):
     tuples_train = ged_env.generate_tuples(ged_env.training_graphs, args.train_sample, 0, device)
     tuples_test = ged_env.generate_tuples(ged_env.val_graphs, args.test_sample, 1, device)
 
-
+    
 
     # init models
     memory = Memory()
@@ -305,7 +300,6 @@ def main(args):
             if timestep % args.update_timestep == 0:
                 closs = ppo.update(memory)
                 critic_loss.append(closs)
-
                 memory.clear_memory()
 
             running_reward += sum(items_batch.reward) / args.batch_size
@@ -325,8 +319,6 @@ def main(args):
             now_time = time.time()
             avg_time = (now_time - prev_time) / args.log_interval
             prev_time = now_time
-
-           
 
             print(
                 f'Episode {i_episode} \t '
@@ -358,7 +350,7 @@ def main(args):
                 # run testing
                 test_dict = evaluate(ppo.policy, ged_env, tuples_test, args.max_timesteps, args.search_size,
                                      None if torch.cuda.is_available() else mp_pool)
-                
+                # write to summary writter
                 print("########## Evaluate complete ##########")
                 # fix running time value
                 prev_time += time.time() - prev_test_time
@@ -416,7 +408,7 @@ def parse_arguments():
 
     if args.config:
         with open('config/' + args.config) as f:
-            cfg_dict = yaml.load(f, Loader=yaml.FullLoader)
+            cfg_dict = yaml.load(f,Loader=yaml.FullLoader)
             for key, val in cfg_dict.items():
                 assert hasattr(args, key), f'Unknown config key: {key}'
                 setattr(args, key, val)
