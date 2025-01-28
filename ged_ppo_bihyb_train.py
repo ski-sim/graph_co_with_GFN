@@ -14,7 +14,7 @@ import wandb
 from src.ged_ppo_bihyb_model import ActorNet, CriticNet, GraphEncoder
 from utils.utils import print_args
 from utils.tfboard_helper import TensorboardUtil
-from ged_ppo_bihyb_eval import evaluate
+from ged_ppo_bihyb_eval import evaluate,evaluate_gfn
 from utils.ged_env import GEDenv
 import psutil
 from collections import deque
@@ -149,7 +149,7 @@ def softmax(x):
     return exp_x / exp_x.sum()
 
 
-def sample_memory(memory, sample_size=20):
+def sample_memory(memory, sample_size=10):
     
     rewards = np.array(memory.rewards, dtype=np.float32)
     probabilities = softmax(rewards)
@@ -427,7 +427,8 @@ def main(args):
     tuples_test = ged_env.generate_tuples(ged_env.val_graphs, args.test_sample, 1, device)
 
     # init models
-    memory = Memory()
+    # memory = Memory()
+    memory =  Memory_deque(maxlen=300) 
     if args.model == 'ppo':
         ppo = PPO(args, device)
         num_workers = cpu_count()
@@ -452,7 +453,6 @@ def main(args):
                 items_batch.append(0, inp_graph_1, inp_graph_2, ori_k, greedy,forward_edge_candidates, backward_edge_candidates, False, ori_greedy)
 
             for t in range(args.max_timesteps):
-                print(timestep)
                 timestep += 1
 
                 # Running policy_old:
@@ -642,9 +642,9 @@ def main(args):
 
                 # update if its time
                 if timestep % args.update_timestep == 0:
-                    # sampled_memory = sample_memory(memory)
-                    # loss = gfn.update(sampled_memory)
-                    loss = gfn.update(memory)
+                    sampled_memory = sample_memory(memory)
+                    loss = gfn.update(sampled_memory)
+                    # loss = gfn.update(memory)
                     gfn_loss.append(loss)                      
 
                 running_reward += sum(items_batch.reward) / args.batch_size
@@ -704,7 +704,7 @@ def main(args):
                     print("########## Evaluate on Test ##########")
                     
                     # run testing
-                    test_dict = evaluate(ppo.policy, ged_env, tuples_test, args.max_timesteps, args.search_size,
+                    test_dict = evaluate_gfn(gfn, ged_env, tuples_test, args.max_timesteps, args.search_size,
                                         None if torch.cuda.is_available() else mp_pool)
                     print("########## Evaluate complete ##########")
                     # fix running time value
@@ -716,7 +716,7 @@ def main(args):
                     best_test_ratio = test_dict["ratio"]["mean"]
                     file_name = f'./GFN_{args.solver_type}_dataset{args.dataset}' \
                                 f'_beam{args.search_size}_ratio{best_test_ratio:.4f}.pt'
-                    torch.save(ppo.policy.state_dict(), file_name)
+                    torch.save(gfn.state_dict(), file_name)
     
 def parse_arguments():
     parser = argparse.ArgumentParser(description='GED solver. You have two ways of setting the parameters: \n'
@@ -761,7 +761,7 @@ def parse_arguments():
     parser.add_argument('--test_model_weight', default='', type=str, help='the path of model weight to be loaded')
 
     # GFlowNet
-    parser.add_argument('--model', default='ppo', type=str, help='model name')
+    parser.add_argument('--model', default='gfn', type=str, help='model name')
     parser.add_argument('--beta', default=1, type=int, help='gfn hyper parameter')
 
     args = parser.parse_args()
