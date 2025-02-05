@@ -17,12 +17,12 @@ eps_clip: 0.1
 # model parameters
 node_output_size: 64
 gnn_layers: 3
-
+beta : 1
 # test parameters
 search_size: 3
 
 # misc configs
 log_interval: 1
-test_interval: 100
-max_episodes: 2000
+test_interval: 200
+max_episodes: 10000
 test_model_weight: pretrained/PPO_ipfp_datasetAIDS-20-30_beam3_ratio0.2117.pt

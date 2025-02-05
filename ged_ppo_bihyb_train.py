@@ -20,7 +20,7 @@ import psutil
 from collections import deque
 wandb.login(key="89cf62dcabfd331d496f3c5f278a9388394a25d4")
 wandb.init(project='GED_PPO_GFN')
-wandb.run.name = 'GFN_on-policy_AIDS20-30'
+wandb.run.name = 'test' # 'GFN_off-policy_AIDS20-30_lr1e-04_beta20'
 
 class ItemsContainer:
     def __init__(self):
@@ -144,6 +144,38 @@ class Memory_deque:
         self.rewards.clear()
         self.is_terminals.clear()
 
+    def merge(self, other_memory):
+            """
+            Merges another Memory_deque into this one.
+            If the combined size exceeds maxlen, the oldest entries will be removed.
+            """
+            self.actions.extend(other_memory.actions)
+            self.states.extend(other_memory.states)
+            self.next_states.extend(other_memory.next_states)
+            # self.candidates.extend(other_memory.candidates)
+            self.forward_candidates.extend(other_memory.forward_candidates)
+            self.backward_candidates.extend(other_memory.backward_candidates)
+            self.logprobs.extend(other_memory.logprobs)
+            self.rewards.extend(other_memory.rewards)
+            self.is_terminals.extend(other_memory.is_terminals)
+
+    def trim_recent(self, sample_size):
+        """
+        Sample the most recent `sample_size` items and trim the memory.
+        Returns a new Memory_deque containing the sampled items.
+        """
+        # 기존 memory에서 잘라내기
+        self.actions = deque(list(self.actions)[:-sample_size], maxlen=self.actions.maxlen)
+        self.states = deque(list(self.states)[:-sample_size], maxlen=self.states.maxlen)
+        self.next_states = deque(list(self.next_states)[:-sample_size], maxlen=self.next_states.maxlen)
+        # self.candidates = deque(list(self.candidates)[:-sample_size], maxlen=self.candidates.maxlen)
+        self.forward_candidates = deque(list(self.forward_candidates)[:-sample_size], maxlen=self.forward_candidates.maxlen)
+        self.backward_candidates = deque(list(self.backward_candidates)[:-sample_size], maxlen=self.backward_candidates.maxlen)
+        self.logprobs = deque(list(self.logprobs)[:-sample_size], maxlen=self.logprobs.maxlen)
+        self.rewards = deque(list(self.rewards)[:-sample_size], maxlen=self.rewards.maxlen)
+        self.is_terminals = deque(list(self.is_terminals)[:-sample_size], maxlen=self.is_terminals.maxlen)
+
+
 def softmax(x):
     exp_x = np.exp(x - np.max(x))  # 안정성을 위해 최대값을 빼줌 (overflow 방지)
     return exp_x / exp_x.sum()
@@ -151,10 +183,10 @@ def softmax(x):
 
 def sample_memory(memory, sample_size=10):
     
-    rewards = np.array(memory.rewards, dtype=np.float32)
+    rewards = np.array(memory.rewards, dtype=np.float32) / 10000
+
     probabilities = softmax(rewards)
     probabilities_tensor = torch.tensor(probabilities, dtype=torch.float32).squeeze()
-    
     sampled_indices = torch.multinomial(probabilities_tensor, num_samples=sample_size, replacement=False)
     sampled_memory = Memory_deque(maxlen=sample_size)
 
@@ -162,10 +194,10 @@ def sample_memory(memory, sample_size=10):
     for idx in sampled_indices:
         sampled_memory.actions.append(memory.actions[idx])
         sampled_memory.states.append(memory.states[idx])
-        sampled_memory.next_states.append(memory.next_states[idx])
-        sampled_memory.candidates.append(memory.candidates[idx])
-        #sampled_memory.forward_candidates.append(memory.forward_candidates[idx])
-        #sampled_memory.backward_candidates.append(memory.backward_candidates[idx])
+        # sampled_memory.next_states.append(memory.next_states[idx])
+        # sampled_memory.candidates.append(memory.candidates[idx])
+        sampled_memory.forward_candidates.append(memory.forward_candidates[idx])
+        sampled_memory.backward_candidates.append(memory.backward_candidates[idx])
         sampled_memory.logprobs.append(memory.logprobs[idx])
         sampled_memory.rewards.append(memory.rewards[idx])
         sampled_memory.is_terminals.append(memory.is_terminals[idx])
@@ -174,6 +206,42 @@ def sample_memory(memory, sample_size=10):
     # print(sampled_rewards)
     return sampled_memory
 
+def filter_memory(memory, threshold=-0.0):
+    """
+    Filters the memory to remove items with rewards <= threshold.
+    The original memory is updated to only contain the remaining items.
+    """
+    rewards = np.array(memory.rewards, dtype=np.float32)
+    valid_indices = np.where(rewards > threshold)[0]
+
+    memory.actions = deque([memory.actions[i] for i in valid_indices], maxlen=memory.actions.maxlen)
+    memory.states = deque([memory.states[i] for i in valid_indices], maxlen=memory.states.maxlen)
+    # memory.next_states = deque([memory.next_states[i] for i in valid_indices], maxlen=memory.next_states.maxlen)
+    # memory.candidates = deque([memory.candidates[i] for i in valid_indices], maxlen=memory.candidates.maxlen)
+    memory.forward_candidates = deque([memory.forward_candidates[i] for i in valid_indices], maxlen=memory.forward_candidates.maxlen)
+    memory.backward_candidates = deque([memory.backward_candidates[i] for i in valid_indices], maxlen=memory.backward_candidates.maxlen)
+    memory.logprobs = deque([memory.logprobs[i] for i in valid_indices], maxlen=memory.logprobs.maxlen)
+    memory.rewards = deque([memory.rewards[i] for i in valid_indices], maxlen=memory.rewards.maxlen)
+    memory.is_terminals = deque([memory.is_terminals[i] for i in valid_indices], maxlen=memory.is_terminals.maxlen)
+
+    return memory
+
+def sample_recent_memory(memory, sample_size=20):
+    # 최근 `sample_size`개의 데이터를 추출
+    sampled_memory = Memory_deque(maxlen=sample_size)
+
+    # 슬라이싱으로 최근 데이터 추출
+    sampled_memory.actions.extend(list(memory.actions)[-sample_size:])
+    sampled_memory.states.extend(list(memory.states)[-sample_size:])
+    sampled_memory.next_states.extend(list(memory.next_states)[-sample_size:])
+    # sampled_memory.candidates.extend(list(memory.candidates)[-sample_size:])
+    sampled_memory.forward_candidates.extend(list(memory.forward_candidates)[-sample_size:])
+    sampled_memory.backward_candidates.extend(list(memory.backward_candidates)[-sample_size:])
+    sampled_memory.logprobs.extend(list(memory.logprobs)[-sample_size:])
+    sampled_memory.rewards.extend(list(memory.rewards)[-sample_size:])
+    sampled_memory.is_terminals.extend(list(memory.is_terminals)[-sample_size:])
+
+    return sampled_memory
 
 class ActorCritic(nn.Module):
     def __init__(self, node_feature_dim, node_output_size, batch_norm, one_hot_degree, gnn_layers):
@@ -303,12 +371,13 @@ class PPO:
 
 
 
-class GFN:
+class GFN(nn.Module):
     def __init__(self, args, device):
+        super(GFN, self).__init__()
         self.lr = args.learning_rate
         self.betas = args.betas
         self.device = device
-
+        self.K_epochs = args.k_epochs
         ac_params = args.node_feature_dim, args.node_output_size, args.batch_norm, args.one_hot_degree, args.gnn_layers
 
         self.state_encoder = GraphEncoder(args.node_feature_dim, args.node_output_size, args.batch_norm, args.one_hot_degree, args.gnn_layers)
@@ -321,8 +390,8 @@ class GFN:
 
         self.optimizer = torch.optim.Adam(
             [{'params': self.forward_policy.parameters()},
-             {'params': self.flow_model.parameters(), 'lr': self.lr * 10}, # we usually assign high learning rate for flow model
-             {'params': self.state_encoder.parameters(), 'lr': self.lr / 10}],
+             {'params': self.flow_model.parameters(), 'lr': self.lr *50 }, # we usually assign high learning rate for flow model
+             {'params': self.state_encoder.parameters(), 'lr': self.lr }],
             lr=self.lr, betas=self.betas)
 
         if len(args.lr_steps) > 0:
@@ -344,6 +413,18 @@ class GFN:
         memory.logprobs.append(action_logits)
         memory.forward_candidates.append(forward_edge_candidates)
         memory.backward_candidates.append(backward_edge_candidates)
+        
+        return actions
+    
+    def act_2(self, inp_graph_1, inp_graph_2, forward_edge_candidates, backward_edge_candidates, memory,graph_index):
+        diff_feat, graph_feat_1, graph_feat_2 = self.state_encoder(inp_graph_1, inp_graph_2)
+        actions, action_logits, entropy = self.forward_policy(diff_feat)
+
+        memory[graph_index].states.append((inp_graph_1, inp_graph_2))
+        memory[graph_index].actions.append(actions)
+        memory[graph_index].logprobs.append(action_logits)
+        memory[graph_index].forward_candidates.append(forward_edge_candidates)
+        memory[graph_index].backward_candidates.append(backward_edge_candidates)
         
         return actions
     
@@ -378,7 +459,10 @@ class GFN:
         
         states1 = [data for sublist in list(states1) for data in sublist]
         states2 = [data for sublist in list(states2) for data in sublist]
- 
+
+        gfn_loss_sum = 0
+        # Optimize policy for K epochs:
+        # for _ in range(self.K_epochs): 
         log_pf = self.evaluate(list(states1), list(states2), actions).sum(dim=0)
         # we set pb as uniform policy. pb = 1/(number of possible backward actions from current state)
         log_pb = torch.tensor([1/(sum([len(v) for k, v in candi.items()]) // 2 + 1e-7) for candi in backward_candidates]).to(self.device).log()
@@ -394,19 +478,20 @@ class GFN:
         # FL-DB parametrization. We consider reward as intermediate energy function over transitions
         total_loss -= rewards[:-1]
         total_loss = total_loss.pow(2).mean()
-        
+        gfn_loss_sum += total_loss
+        print(total_loss)
         # back propagation
         self.optimizer.zero_grad()
         total_loss.backward()
         # gradient clipping
-        torch.nn.utils.clip_grad_norm_(self.state_encoder.parameters(), 5)
-        torch.nn.utils.clip_grad_norm_(self.flow_model.parameters(), 5)
-        torch.nn.utils.clip_grad_norm_(self.forward_policy.parameters(), 5)
+        torch.nn.utils.clip_grad_norm_(self.state_encoder.parameters(), 1)
+        torch.nn.utils.clip_grad_norm_(self.flow_model.parameters(), 1)
+        torch.nn.utils.clip_grad_norm_(self.forward_policy.parameters(), 1)
         self.optimizer.step()
         if self.lr_scheduler:
             self.lr_scheduler.step()
             
-        return total_loss
+        return gfn_loss_sum # / self.K_epochs
 
 
 def main(args):
@@ -420,15 +505,16 @@ def main(args):
     ged_env = GEDenv(args.solver_type, args.dataset)
     args.node_feature_dim = ged_env.feature_dim
     # get current device (cuda or cpu)
-    device = torch.device("cuda:6" if torch.cuda.is_available() else "cpu")
+    device = torch.device("cuda:7" if torch.cuda.is_available() else "cpu")
 
     # load training/testing data
     tuples_train = ged_env.generate_tuples(ged_env.training_graphs, args.train_sample, 0, device)
     tuples_test = ged_env.generate_tuples(ged_env.val_graphs, args.test_sample, 1, device)
 
     # init models
-    # memory = Memory()
-    memory =  Memory_deque(maxlen=300) 
+    memory = Memory()
+    # memory =  Memory_deque(maxlen=300) 
+    # memory =  [Memory_deque(maxlen=300) for i in range(args.train_sample)]
     if args.model == 'ppo':
         ppo = PPO(args, device)
         num_workers = cpu_count()
@@ -611,7 +697,8 @@ def main(args):
                 # Running policy_old:
                 
                 with torch.no_grad():
-                    action_batch = gfn.act(items_batch.inp_graph_1, items_batch.inp_graph_2, items_batch.forward_edge_candidates, items_batch.backward_edge_candidates, memory)
+                    # action_batch = gfn.act(items_batch.inp_graph_1, items_batch.inp_graph_2, items_batch.forward_edge_candidates, items_batch.backward_edge_candidates, memory)
+                    action_batch = gfn.act_2(items_batch.inp_graph_1, items_batch.inp_graph_2, items_batch.forward_edge_candidates, items_batch.backward_edge_candidates, memory, graph_index)
                 
                 def step_func_feeder(batch_size):
                     batch_inp_graph_1 = items_batch.inp_graph_1
@@ -636,16 +723,45 @@ def main(args):
                                     forward_edge_candidates=forward_edge_candidates, backward_edge_candidates=backward_edge_candidates, done=done)
                     
                 # Saving reward and is_terminal:
-                memory.rewards.append(items_batch.reward)
-                memory.is_terminals.append(items_batch.done)
+                # memory.rewards.append(items_batch.reward)
+                # memory.is_terminals.append(items_batch.done)
                 # memory.next_states.append((items_batch.inp_graph_1, items_batch.inp_graph_2))
+                
+                memory[graph_index].rewards.append(items_batch.reward)
+                memory[graph_index].is_terminals.append(items_batch.done)
 
                 # update if its time
                 if timestep % args.update_timestep == 0:
-                    sampled_memory = sample_memory(memory)
+                    if i_episode>=50:
+                        sample_index = random.randint(0, 49)
+                        sampled_memory = sample_memory(memory[sample_index])
+                    else:
+                        sampled_memory = sample_memory(memory[graph_index])
                     loss = gfn.update(sampled_memory)
                     # loss = gfn.update(memory)
-                    gfn_loss.append(loss)                      
+                    gfn_loss.append(loss)  
+
+                # if timestep % args.update_timestep == 0:
+                #     # sampling instance and then sampling data 
+                #     # instance_idx = random.randint(0, len(memory)-1)
+                #     # sampled_memory = sample_memory(memory[instance_idx])
+                #     if random.random() < 0.5:
+                #         sampled_memory = sample_memory(memory)
+                #         loss = gfn.update(sampled_memory)
+                #         gfn_loss.append(loss)
+
+  
+                    
+                #     # sample filtering
+                #     else:
+                #         sampled_memory = sample_recent_memory(memory,20)
+                #         memory.trim_recent(20)
+                #         loss = gfn.update(sampled_memory)
+                #         gfn_loss.append(loss)
+
+                #         filtered_sampled_memory = filter_memory(sampled_memory)
+                #         memory.merge(filtered_sampled_memory)
+                    
 
                 running_reward += sum(items_batch.reward) / args.batch_size
                 if any(items_batch.done):
@@ -761,7 +877,7 @@ def parse_arguments():
     parser.add_argument('--test_model_weight', default='', type=str, help='the path of model weight to be loaded')
 
     # GFlowNet
-    parser.add_argument('--model', default='gfn', type=str, help='model name')
+    parser.add_argument('--model', default='ppo', type=str, help='model name')
     parser.add_argument('--beta', default=1, type=int, help='gfn hyper parameter')
 
     args = parser.parse_args()

@@ -121,10 +121,12 @@ class GEDenv(object):
             new_graph_1.edge_index = torch.cat((new_graph_1.edge_index, act, act.flip(dims=(0,))), dim=1)
         new_solution, _, __ = self.solve_feasible_ged(new_graph_1, graph_2, self.solver_type, ori_k=ori_k)
         # reward = np.power(prev_solution - new_solution,beta)
-        reward = np.power((prev_solution - new_solution).cpu().numpy(), beta)
+        
+        reward = (prev_solution - new_solution).cpu().numpy()*beta
+        reward = reward[0]
         
         forward_edge_candidates, backward_edge_candidates = self.get_edge_candidates(new_graph_1)
-        return reward[0], new_graph_1, new_solution, forward_edge_candidates, backward_edge_candidates
+        return reward, new_graph_1, new_solution, forward_edge_candidates, backward_edge_candidates
 
     def get_dependency_nodes(self, graph):
         parents = {}
@@ -162,12 +164,14 @@ class GEDenv(object):
         forward_edge_candidates = {}
         backward_edge_candidates = {}
         for i in range(graph.num_nodes):
-            forward_edge_candidates[i] = set(range(graph.num_nodes)) 
+            forward_edge_candidates[i] = set(range(graph.num_nodes)) - set([i]) 
             if init:
                 backward_edge_candidates[i] = set()
             else:
                 # backward_edge_candidates[i] = relations_map[i] - self.initial_relations_map[i]
-                backward_edge_candidates[i] = (edges[i] | self.initial_edges[i]) - (edges[i] & self.initial_edges[i])
+                # backward_edge_candidates[i] = (edges[i] | self.initial_edges[i]) - (edges[i] & self.initial_edges[i])
+                
+                backward_edge_candidates[i] =  set(range(graph.num_nodes)) - set([i]) 
         # return edge_candidates
         if init:
             self.initial_edges = edges
